@@ -1,6 +1,7 @@
-import { Pose, PoseScore } from '@/types'
+import { Pose, PoseScore, ExerciseType } from '@/types'
+import { EXERCISE_TYPES } from '@/constants/exerciseTypes'
 
-export const analyzePose = (pose: Pose, exerciseType: string): PoseScore => {
+export const analyzePose = (pose: Pose, exerciseType: ExerciseType | string): PoseScore => {
   const keypoints = pose.keypoints
   let alignment = 100
   let range = 100
@@ -21,13 +22,13 @@ export const analyzePose = (pose: Pose, exerciseType: string): PoseScore => {
 
   // 운동 타입별 분석
   switch (exerciseType) {
-    case 'pushup':
+    case EXERCISE_TYPES.PUSHUP:
       return analyzePushup(pose, keypoints)
-    case 'squat':
+    case EXERCISE_TYPES.SQUAT:
       return analyzeSquat(pose, keypoints)
-    case 'lunge':
+    case EXERCISE_TYPES.LUNGE:
       return analyzeLunge(pose, keypoints)
-    case 'situp':
+    case 'situp': // situp은 아직 상수에 없으므로 유지
       return analyzeSitup(pose, keypoints)
     default:
       return {

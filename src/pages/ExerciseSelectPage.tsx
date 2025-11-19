@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { AppMode, ExerciseType, ExerciseConfig, AlarmConfig } from '@/types'
+import { EXERCISE_TYPES, EXERCISE_TYPE_DETAILS } from '@/constants/exerciseTypes'
 import AnimatedBackground from '@/components/AnimatedBackground'
 
 const ExerciseSelectPage = () => {
@@ -9,7 +10,7 @@ const ExerciseSelectPage = () => {
   const [searchParams] = useSearchParams()
   const mode = (searchParams.get('mode') || 'single') as AppMode
 
-  const [selectedExercise, setSelectedExercise] = useState<ExerciseType>('squat')
+  const [selectedExercise, setSelectedExercise] = useState<ExerciseType>(EXERCISE_TYPES.SQUAT)
   const [sets, setSets] = useState(2)
   const [reps, setReps] = useState(6)
   const [restTime, setRestTime] = useState(10) // 쉬는 시간 (초, 기본값 10초)
@@ -36,36 +37,7 @@ const ExerciseSelectPage = () => {
     )
   }
 
-  const exercises = [
-    { 
-      id: 'squat' as ExerciseType, 
-      name: '스쿼트', 
-      icon: '🦵',
-      description: '무릎을 구부려 엉덩이를 낮추는 동작',
-      recognitionGuide: '• 무릎 각도가 140도 이하로 구부려져야 인식됩니다\n• 엉덩이가 무릎보다 낮아져야 카운트됩니다\n• 발은 어깨 너비만큼 벌리고, 무릎이 발가락을 넘지 않도록 주의하세요'
-    },
-    { 
-      id: 'pushup' as ExerciseType, 
-      name: '푸시업', 
-      icon: '💪',
-      description: '팔을 구부려 몸을 내렸다 올리는 동작',
-      recognitionGuide: '• 팔꿈치 각도가 100도 이하로 구부려져야 인식됩니다\n• 팔을 완전히 펴면(130도 이상) 카운트됩니다\n• 어깨, 팔꿈치, 손목이 일직선이 되도록 유지하세요\n• 몸통을 곧게 유지하고 엉덩이가 올라가지 않도록 주의하세요'
-    },
-    { 
-      id: 'lunge' as ExerciseType, 
-      name: '런지', 
-      icon: '🚶',
-      description: '한 발을 앞으로 내밀어 무릎을 구부리는 동작',
-      recognitionGuide: '• 앞 무릎이 90도 정도로 구부려져야 인식됩니다\n• 뒷 무릎이 바닥에 거의 닿을 정도로 내려가야 카운트됩니다\n• 앞 무릎이 발가락을 넘지 않도록 주의하세요\n• 상체를 곧게 유지하세요'
-    },
-    { 
-      id: 'custom' as ExerciseType, 
-      name: '종목 추가', 
-      icon: '➕',
-      description: '사용자 정의 운동 종목',
-      recognitionGuide: ''
-    },
-  ]
+  const exercises = EXERCISE_TYPE_DETAILS
 
   const handleStart = () => {
     if (mode === 'jogging') {
@@ -87,7 +59,7 @@ const ExerciseSelectPage = () => {
       sets,
       reps,
       restTime, // 쉬는 시간 추가
-      customName: selectedExercise === 'custom' ? customName : undefined,
+      customName: selectedExercise === EXERCISE_TYPES.CUSTOM ? customName : undefined,
     }
 
     navigate('/training', {
@@ -127,7 +99,7 @@ const ExerciseSelectPage = () => {
             ))}
           </div>
 
-          {selectedExercise === 'custom' && (
+          {selectedExercise === EXERCISE_TYPES.CUSTOM && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -144,7 +116,7 @@ const ExerciseSelectPage = () => {
           )}
 
           {/* 선택된 종목의 인식 기준 설명 */}
-          {selectedExercise !== 'custom' && exercises.find(e => e.id === selectedExercise)?.recognitionGuide && (
+          {selectedExercise !== EXERCISE_TYPES.CUSTOM && exercises.find(e => e.id === selectedExercise)?.recognitionGuide && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -307,7 +279,7 @@ const ExerciseSelectPage = () => {
           </button>
           <button
             onClick={handleStart}
-            disabled={selectedExercise === 'custom' && !customName}
+            disabled={selectedExercise === EXERCISE_TYPES.CUSTOM && !customName}
             className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             운동 시작

@@ -17,7 +17,8 @@ import EffectOverlay from '@/components/EffectOverlay'
 import SilhouetteCanvas from '@/components/SilhouetteCanvas'
 import DebugInfo from '@/components/DebugInfo'
 import VolumeControl from '@/components/VolumeControl'
-import { AppMode, ExerciseConfig, ExerciseSession, ExerciseCount, Effect, AlarmConfig } from '@/types'
+import { AppMode, ExerciseConfig, ExerciseSession, ExerciseCount, Effect, AlarmConfig, ExerciseType } from '@/types'
+import { EXERCISE_TYPE_NAMES, EXERCISE_TYPES } from '@/constants/exerciseTypes'
 import { getVersion } from '@/utils/version'
 import { alarmService } from '@/services/alarmService'
 
@@ -349,7 +350,7 @@ const TrainingPage = () => {
     }
     
     // 운동 타입별 필수 키포인트 확인
-    if (config.type === 'squat') {
+    if (config.type === EXERCISE_TYPES.SQUAT) {
       const requiredKeypoints = ['left_hip', 'right_hip', 'left_knee', 'right_knee']
       const hasRequired = requiredKeypoints.every(name => 
         pose.keypoints.some(kp => kp.name === name && kp.score && kp.score > 0.2) // 신뢰도 임계값을 0.3 -> 0.2로 낮춤
@@ -367,7 +368,7 @@ const TrainingPage = () => {
         }
         return // 필수 키포인트가 없으면 스킵
       }
-    } else if (config.type === 'pushup') {
+    } else if (config.type === EXERCISE_TYPES.PUSHUP) {
       const requiredKeypoints = ['left_shoulder', 'right_shoulder', 'left_wrist', 'right_wrist']
       const hasRequired = requiredKeypoints.every(name => 
         pose.keypoints.some(kp => kp.name === name && kp.score && kp.score > 0.3)
@@ -407,7 +408,7 @@ const TrainingPage = () => {
     const result = countService.analyzePose(pose, videoHeight)
     
     // 디버깅: 스쿼트 분석 결과 로그 (주기적으로, 너무 많이 출력되지 않도록)
-    if (config.type === 'squat' && Math.random() < 0.02) { // 2% 확률로 로그 출력
+    if (config.type === EXERCISE_TYPES.SQUAT && Math.random() < 0.02) { // 2% 확률로 로그 출력
       console.log('🔍 스쿼트 분석 결과:', {
         shouldIncrement: result.shouldIncrement,
         count: result.count,
@@ -715,13 +716,7 @@ const TrainingPage = () => {
 
   // 운동 종목 이름 변환
   const getExerciseName = (type: string) => {
-    const names: Record<string, string> = {
-      squat: '스쿼트',
-      pushup: '푸시업',
-      lunge: '런지',
-      custom: config.customName || '커스텀',
-    }
-    return names[type] || type
+    return EXERCISE_TYPE_NAMES[type as ExerciseType] || config.customName || '커스텀'
   }
 
   return (
@@ -866,7 +861,7 @@ const TrainingPage = () => {
         )}
 
         <EffectOverlay effects={effects} />
-        <DebugInfo poses={poses} isEnabled={isStarted && (config.type === 'squat' || config.type === 'pushup')} />
+        <DebugInfo poses={poses} isEnabled={isStarted && (config.type === EXERCISE_TYPES.SQUAT || config.type === EXERCISE_TYPES.PUSHUP)} />
         
         {/* 알람 알림 모달 */}
         {alarmNotification && (

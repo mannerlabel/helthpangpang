@@ -1,4 +1,5 @@
 import { Pose, PoseKeypoint } from '@/types'
+import { calculateAngle, findKeypoint } from '@/utils/poseUtils'
 
 /**
  * MediaPipe를 사용한 스쿼트 카운트 감지 유틸리티
@@ -20,33 +21,7 @@ export class SquatCounter {
   private lastCountTime: number = 0 // 마지막 카운트 시간 (중복 방지)
   private readonly minCountInterval: number = 500 // 최소 카운트 간격 (밀리초, 0.5초로 줄임)
   
-  /**
-   * 두 점 사이의 각도 계산 (도 단위)
-   */
-  private calculateAngle(
-    point1: { x: number; y: number },
-    point2: { x: number; y: number },
-    point3: { x: number; y: number }
-  ): number {
-    const radians = Math.atan2(point3.y - point2.y, point3.x - point2.x) -
-                    Math.atan2(point1.y - point2.y, point1.x - point2.x)
-    let angle = Math.abs(radians * 180.0 / Math.PI)
-    if (angle > 180.0) {
-      angle = 360 - angle
-    }
-    return angle
-  }
-
-  /**
-   * 키포인트 찾기 (신뢰도 체크 포함)
-   */
-  private findKeypoint(keypoints: PoseKeypoint[], name: string): PoseKeypoint | null {
-    const kp = keypoints.find((kp) => kp.name === name)
-    if (kp && kp.score && kp.score > 0.3) {
-      return kp
-    }
-    return null
-  }
+  // 공통 유틸리티 사용 (calculateAngle, findKeypoint는 poseUtils에서 import)
 
   /**
    * 스쿼트 자세 분석 및 카운트
@@ -62,12 +37,12 @@ export class SquatCounter {
     const keypoints = pose.keypoints
     
     // 필요한 키포인트 찾기
-    const leftHip = this.findKeypoint(keypoints, 'left_hip')
-    const rightHip = this.findKeypoint(keypoints, 'right_hip')
-    const leftKnee = this.findKeypoint(keypoints, 'left_knee')
-    const rightKnee = this.findKeypoint(keypoints, 'right_knee')
-    const leftAnkle = this.findKeypoint(keypoints, 'left_ankle')
-    const rightAnkle = this.findKeypoint(keypoints, 'right_ankle')
+    const leftHip = findKeypoint(keypoints, 'left_hip')
+    const rightHip = findKeypoint(keypoints, 'right_hip')
+    const leftKnee = findKeypoint(keypoints, 'left_knee')
+    const rightKnee = findKeypoint(keypoints, 'right_knee')
+    const leftAnkle = findKeypoint(keypoints, 'left_ankle')
+    const rightAnkle = findKeypoint(keypoints, 'right_ankle')
 
     // 필수 키포인트가 없으면 카운트하지 않음
     if (!leftHip || !rightHip || !leftKnee || !rightKnee) {
@@ -143,7 +118,7 @@ export class SquatCounter {
     let rightKneeAngle = 180
     
     if (leftHip && leftKnee && leftAnkle) {
-      leftKneeAngle = this.calculateAngle(
+      leftKneeAngle = calculateAngle(
         { x: leftHip.x, y: leftHip.y },
         { x: leftKnee.x, y: leftKnee.y },
         { x: leftAnkle.x, y: leftAnkle.y }
@@ -151,7 +126,7 @@ export class SquatCounter {
     }
     
     if (rightHip && rightKnee && rightAnkle) {
-      rightKneeAngle = this.calculateAngle(
+      rightKneeAngle = calculateAngle(
         { x: rightHip.x, y: rightHip.y },
         { x: rightKnee.x, y: rightKnee.y },
         { x: rightAnkle.x, y: rightAnkle.y }

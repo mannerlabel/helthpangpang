@@ -32,8 +32,10 @@ export interface ExerciseCount {
 // 앱 모드 타입
 export type AppMode = 'single' | 'crew' | 'jogging'
 
-// 운동 종목 타입
-export type ExerciseType = 'squat' | 'pushup' | 'lunge' | 'custom'
+// 운동 종목 타입 (상수에서 재export하여 타입 안정성 보장)
+// 순환 참조 방지를 위해 타입을 먼저 import
+import type { ExerciseType } from '@/constants/exerciseTypes'
+export type { ExerciseType }
 
 // 운동 설정
 export interface ExerciseConfig {

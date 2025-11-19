@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { AppMode, ExerciseSession, ExerciseType, AIAnalysis } from '@/types'
+import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { getVersion } from '@/utils/version'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { aiAnalysisService } from '@/services/aiAnalysisService'
@@ -73,13 +74,7 @@ const ModeSelectionPage = () => {
   }, [])
 
   const getExerciseName = (type: ExerciseType): string => {
-    const names: Record<ExerciseType, string> = {
-      squat: '스쿼트',
-      pushup: '푸시업',
-      lunge: '런지',
-      custom: '커스텀',
-    }
-    return names[type] || type
+    return EXERCISE_TYPE_NAMES[type] || '커스텀'
   }
 
   const formatDate = (timestamp?: number): string => {

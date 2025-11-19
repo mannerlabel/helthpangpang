@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { ExerciseType, ExerciseConfig, AlarmConfig } from '@/types'
+import { EXERCISE_TYPES, EXERCISE_TYPE_OPTIONS } from '@/constants/exerciseTypes'
 
 const CrewCreatePage = () => {
   const navigate = useNavigate()
@@ -11,7 +12,7 @@ const CrewCreatePage = () => {
   const [maxMembers, setMaxMembers] = useState<number | null>(null)
   const [hasMemberLimit, setHasMemberLimit] = useState(false)
   const [memberLimit, setMemberLimit] = useState(10)
-  const [exerciseType, setExerciseType] = useState<ExerciseType>('squat')
+  const [exerciseType, setExerciseType] = useState<ExerciseType>(EXERCISE_TYPES.SQUAT)
   const [sets, setSets] = useState(3)
   const [reps, setReps] = useState(10)
   const [restTime, setRestTime] = useState(10)
@@ -20,11 +21,7 @@ const CrewCreatePage = () => {
   const [repeatType, setRepeatType] = useState<'daily' | 'weekly' | 'custom'>('daily')
   const [repeatDays, setRepeatDays] = useState<number[]>([])
 
-  const exercises: { value: ExerciseType; label: string }[] = [
-    { value: 'squat', label: '스쿼트' },
-    { value: 'pushup', label: '푸시업' },
-    { value: 'lunge', label: '런지' },
-  ]
+  const exercises = EXERCISE_TYPE_OPTIONS
 
   const handleSubmit = () => {
     if (!crewName.trim()) {

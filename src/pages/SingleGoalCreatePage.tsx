@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { ExerciseType, ExerciseConfig, AlarmConfig, SingleGoal } from '@/types'
+import { EXERCISE_TYPES, EXERCISE_TYPE_OPTIONS } from '@/constants/exerciseTypes'
 import { audioService } from '@/services/audioService'
 
 const SingleGoalCreatePage = () => {
@@ -11,7 +12,7 @@ const SingleGoalCreatePage = () => {
   const isEditMode = !!goalId
   
   const [goalName, setGoalName] = useState('')
-  const [exerciseType, setExerciseType] = useState<ExerciseType>('squat')
+  const [exerciseType, setExerciseType] = useState<ExerciseType>(EXERCISE_TYPES.SQUAT)
   const [sets, setSets] = useState(3)
   const [reps, setReps] = useState(10)
   const [restTime, setRestTime] = useState(10)
@@ -49,11 +50,7 @@ const SingleGoalCreatePage = () => {
     }
   }, [isEditMode, goalId])
 
-  const exercises: { value: ExerciseType; label: string }[] = [
-    { value: 'squat', label: '스쿼트' },
-    { value: 'pushup', label: '푸시업' },
-    { value: 'lunge', label: '런지' },
-  ]
+  const exercises = EXERCISE_TYPE_OPTIONS
 
   const dayLabels = ['일', '월', '화', '수', '목', '금', '토']
 

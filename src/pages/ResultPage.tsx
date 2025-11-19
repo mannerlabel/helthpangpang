@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ExerciseSession, AIAnalysis } from '@/types'
+import { EXERCISE_TYPES, EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { aiAnalysisService } from '@/services/aiAnalysisService'
 
 const ResultPage = () => {
@@ -48,13 +49,9 @@ const ResultPage = () => {
   if (!session) return null
 
   const exerciseName =
-    session.config.type === 'custom'
+    session.config.type === EXERCISE_TYPES.CUSTOM
       ? session.config.customName || '커스텀 운동'
-      : session.config.type === 'squat'
-      ? '스쿼트'
-      : session.config.type === 'pushup'
-      ? '푸시업'
-      : '런지'
+      : (EXERCISE_TYPE_NAMES[session.config.type as keyof typeof EXERCISE_TYPE_NAMES] || '운동')
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 p-8">

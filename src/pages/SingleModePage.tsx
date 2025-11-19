@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { SingleGoal, ExerciseType } from '@/types'
+import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 
 // Mock 데이터 (차후 Supabase에서 가져올 데이터)
 const mockGoals: SingleGoal[] = [
@@ -60,13 +61,7 @@ const SingleModePage = () => {
   }, [])
 
   const getExerciseName = (type: ExerciseType): string => {
-    const names: Record<ExerciseType, string> = {
-      squat: '스쿼트',
-      pushup: '푸시업',
-      lunge: '런지',
-      custom: '커스텀',
-    }
-    return names[type] || type
+    return EXERCISE_TYPE_NAMES[type] || '커스텀'
   }
 
   const formatAlarmInfo = (alarm?: { time: string; repeatType: string }): string => {

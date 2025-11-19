@@ -1,4 +1,5 @@
 import { Pose, PoseKeypoint } from '@/types'
+import { calculateAngle, findKeypoint } from '@/utils/poseUtils'
 
 /**
  * 팔꿈치 각도를 사용한 푸시업 카운트 감지 유틸리티
@@ -20,39 +21,7 @@ export class PushupCounter {
   private upElbowAngle: number | null = null // up 상태일 때의 팔꿈치 각도 (기준점)
   private debugCounter = 0 // 디버깅용 카운터
 
-  /**
-   * 세 점 사이의 각도 계산 (도 단위)
-   * point1 - point2 - point3 순서로 각도 계산
-   * @param point1 첫 번째 점 (어깨)
-   * @param point2 중간 점 (팔꿈치)
-   * @param point3 세 번째 점 (손목)
-   * @returns 각도 (0-180도)
-   */
-  private calculateAngle(
-    point1: { x: number; y: number },
-    point2: { x: number; y: number },
-    point3: { x: number; y: number }
-  ): number {
-    // squatCounter와 동일한 방식 사용
-    const radians = Math.atan2(point3.y - point2.y, point3.x - point2.x) -
-                    Math.atan2(point1.y - point2.y, point1.x - point2.x)
-    let angle = Math.abs(radians * 180.0 / Math.PI)
-    if (angle > 180.0) {
-      angle = 360 - angle
-    }
-    return angle
-  }
-
-  /**
-   * 키포인트 찾기 (신뢰도 체크 포함)
-   */
-  private findKeypoint(keypoints: PoseKeypoint[], name: string): PoseKeypoint | null {
-    const kp = keypoints.find((kp) => kp.name === name)
-    if (kp && kp.score && kp.score > 0.3) {
-      return kp
-    }
-    return null
-  }
+  // 공통 유틸리티 사용 (calculateAngle, findKeypoint는 poseUtils에서 import)
 
   /**
    * 푸시업 자세 분석 및 카운트
@@ -70,12 +39,12 @@ export class PushupCounter {
     const keypoints = pose.keypoints
     
     // 필요한 키포인트 찾기
-    const leftShoulder = this.findKeypoint(keypoints, 'left_shoulder')
-    const rightShoulder = this.findKeypoint(keypoints, 'right_shoulder')
-    const leftElbow = this.findKeypoint(keypoints, 'left_elbow')
-    const rightElbow = this.findKeypoint(keypoints, 'right_elbow')
-    const leftWrist = this.findKeypoint(keypoints, 'left_wrist')
-    const rightWrist = this.findKeypoint(keypoints, 'right_wrist')
+    const leftShoulder = findKeypoint(keypoints, 'left_shoulder')
+    const rightShoulder = findKeypoint(keypoints, 'right_shoulder')
+    const leftElbow = findKeypoint(keypoints, 'left_elbow')
+    const rightElbow = findKeypoint(keypoints, 'right_elbow')
+    const leftWrist = findKeypoint(keypoints, 'left_wrist')
+    const rightWrist = findKeypoint(keypoints, 'right_wrist')
 
     // 필수 키포인트가 없으면 카운트하지 않음
     // 팔꿈치 각도 계산을 위해 어깨, 팔꿈치, 손목이 모두 필요
@@ -90,14 +59,14 @@ export class PushupCounter {
     }
 
     // 왼쪽 팔꿈치 각도 계산 (어깨-팔꿈치-손목)
-    const leftAngle = this.calculateAngle(
+    const leftAngle = calculateAngle(
       { x: leftShoulder.x, y: leftShoulder.y },
       { x: leftElbow.x, y: leftElbow.y },
       { x: leftWrist.x, y: leftWrist.y }
     )
     
     // 오른쪽 팔꿈치 각도 계산 (어깨-팔꿈치-손목)
-    const rightAngle = this.calculateAngle(
+    const rightAngle = calculateAngle(
       { x: rightShoulder.x, y: rightShoulder.y },
       { x: rightElbow.x, y: rightElbow.y },
       { x: rightWrist.x, y: rightWrist.y }

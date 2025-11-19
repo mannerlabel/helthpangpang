@@ -1,4 +1,5 @@
 import { AIAnalysis, ExerciseSession, ExerciseType } from '@/types'
+import { EXERCISE_TYPES, EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 
 class AIAnalysisService {
   private apiUrl: string
@@ -56,13 +57,9 @@ class AIAnalysisService {
     if (!this.openaiApiKey) return null
 
     const exerciseName =
-      session.config.type === 'custom'
+      session.config.type === EXERCISE_TYPES.CUSTOM
         ? session.config.customName || '커스텀 운동'
-        : session.config.type === 'squat'
-        ? '스쿼트'
-        : session.config.type === 'pushup'
-        ? '푸시업'
-        : '런지'
+        : (EXERCISE_TYPE_NAMES[session.config.type as keyof typeof EXERCISE_TYPE_NAMES] || '운동')
 
     // totalCount가 있으면 사용, 없으면 counts.length 사용
     const totalCount = (session as any).totalCount || session.counts.length
