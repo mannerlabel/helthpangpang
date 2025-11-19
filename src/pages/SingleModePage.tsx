@@ -1,0 +1,203 @@
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { motion } from 'framer-motion'
+import AnimatedBackground from '@/components/AnimatedBackground'
+import { SingleGoal, ExerciseType } from '@/types'
+
+// Mock 데이터 (차후 Supabase에서 가져올 데이터)
+const mockGoals: SingleGoal[] = [
+  {
+    id: 'goal1',
+    name: '아침 스쿼트 챌린지',
+    exerciseType: 'squat',
+    exerciseConfig: { type: 'squat', sets: 3, reps: 15, restTime: 10 },
+    alarm: { enabled: true, time: '07:00', repeatType: 'daily' },
+    createdAt: Date.now() - 86400000 * 5,
+    createdBy: 'user1',
+    isActive: true,
+  },
+  {
+    id: 'goal2',
+    name: '저녁 푸시업',
+    exerciseType: 'pushup',
+    exerciseConfig: { type: 'pushup', sets: 4, reps: 20, restTime: 15 },
+    alarm: { enabled: true, time: '19:00', repeatType: 'daily' },
+    createdAt: Date.now() - 86400000 * 2,
+    createdBy: 'user1',
+    isActive: true,
+  },
+  {
+    id: 'goal3',
+    name: '주말 런지',
+    exerciseType: 'lunge',
+    exerciseConfig: { type: 'lunge', sets: 3, reps: 12, restTime: 10 },
+    alarm: { enabled: true, time: '09:00', repeatType: 'weekly' },
+    createdAt: Date.now() - 86400000 * 7,
+    createdBy: 'user1',
+    isActive: true,
+  },
+]
+
+const SingleModePage = () => {
+  const navigate = useNavigate()
+  const [goals, setGoals] = useState<SingleGoal[]>([])
+
+  useEffect(() => {
+    // TODO: Supabase에서 목표 목록 가져오기
+    // 현재는 localStorage와 mock 데이터 사용
+    const savedGoals = localStorage.getItem('singleGoals')
+    if (savedGoals) {
+      try {
+        const parsed = JSON.parse(savedGoals)
+        setGoals(parsed)
+      } catch (e) {
+        console.error('목표 목록 파싱 오류:', e)
+        setGoals(mockGoals)
+      }
+    } else {
+      setGoals(mockGoals)
+    }
+  }, [])
+
+  const getExerciseName = (type: ExerciseType): string => {
+    const names: Record<ExerciseType, string> = {
+      squat: '스쿼트',
+      pushup: '푸시업',
+      lunge: '런지',
+      custom: '커스텀',
+    }
+    return names[type] || type
+  }
+
+  const formatAlarmInfo = (alarm?: { time: string; repeatType: string }): string => {
+    if (!alarm) return '알람 없음'
+    const repeatText = alarm.repeatType === 'daily' ? '매일' : alarm.repeatType === 'weekly' ? '매주' : '사용자 정의'
+    return `${alarm.time} (${repeatText})`
+  }
+
+  const calculateTimeUntilAlarm = (alarm?: { time: string; repeatType: string }): string => {
+    if (!alarm) return '-'
+    
+    const now = new Date()
+    const [hours, minutes] = alarm.time.split(':').map(Number)
+    const alarmTime = new Date()
+    alarmTime.setHours(hours, minutes, 0, 0)
+    
+    // 오늘 알람 시간이 지났으면 내일로 설정
+    if (alarmTime <= now) {
+      alarmTime.setDate(alarmTime.getDate() + 1)
+    }
+    
+    const diff = alarmTime.getTime() - now.getTime()
+    const hoursLeft = Math.floor(diff / (1000 * 60 * 60))
+    const minutesLeft = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+    
+    if (hoursLeft > 0) {
+      return `${hoursLeft}시간 ${minutesLeft}분 후`
+    } else {
+      return `${minutesLeft}분 후`
+    }
+  }
+
+  const handleStart = (goal: SingleGoal) => {
+    navigate('/training', {
+      state: {
+        mode: 'single',
+        config: goal.exerciseConfig,
+        alarm: goal.alarm,
+        goalId: goal.id,
+      },
+    })
+  }
+
+  return (
+    <div className="min-h-screen p-8 overflow-hidden relative">
+      <AnimatedBackground />
+      <div className="max-w-4xl mx-auto relative z-10">
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-4xl font-bold text-white">싱글 모드</h1>
+          <button
+            onClick={() => navigate('/mode-select')}
+            className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
+          >
+            뒤로
+          </button>
+        </div>
+
+        {/* 목표 생성 버튼 */}
+        <div className="mb-6">
+          <button
+            onClick={() => navigate('/single/goal/create')}
+            className="w-full px-6 py-4 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition font-semibold text-lg"
+          >
+            ➕ 목표 생성
+          </button>
+        </div>
+
+        {/* 목표 목록 */}
+        {goals.length === 0 ? (
+          <div className="bg-gray-800/90 rounded-2xl p-12 text-center">
+            <div className="text-6xl mb-4">🎯</div>
+            <p className="text-xl text-gray-300 mb-6">등록된 목표가 없습니다</p>
+            <button
+              onClick={() => navigate('/single/goal/create')}
+              className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition font-semibold"
+            >
+              목표 생성하기
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {goals.map((goal) => (
+              <motion.div
+                key={goal.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-gray-800/90 rounded-2xl p-6"
+              >
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <div className="flex-1">
+                    <h3 className="text-2xl font-bold text-white mb-3">{goal.name}</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div>
+                        <span className="text-gray-400">운동 종목:</span>
+                        <span className="text-white ml-2">{getExerciseName(goal.exerciseType)}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">운동량:</span>
+                        <span className="text-white ml-2">
+                          {goal.exerciseConfig.sets}세트 × {goal.exerciseConfig.reps}회
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">알람 정보:</span>
+                        <span className="text-white ml-2">{formatAlarmInfo(goal.alarm)}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">운동시작까지:</span>
+                        <span className="text-blue-400 ml-2 font-semibold">
+                          {calculateTimeUntilAlarm(goal.alarm)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <button
+                      onClick={() => handleStart(goal)}
+                      className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition font-semibold whitespace-nowrap"
+                    >
+                      운동 시작
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export default SingleModePage
+

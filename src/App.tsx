@@ -12,6 +12,8 @@ import CrewMainPage from './pages/CrewMainPage'
 import CrewCreatePage from './pages/CrewCreatePage'
 import CrewListPage from './pages/CrewListPage'
 import CrewSearchPage from './pages/CrewSearchPage'
+import SingleModePage from './pages/SingleModePage'
+import SingleGoalCreatePage from './pages/SingleGoalCreatePage'
 
 function App() {
   return (
@@ -31,6 +33,8 @@ function App() {
         <Route path="/crew/create" element={<CrewCreatePage />} />
         <Route path="/crew/my-crews" element={<CrewListPage />} />
         <Route path="/crew/search" element={<CrewSearchPage />} />
+        <Route path="/single" element={<SingleModePage />} />
+        <Route path="/single/goal/create" element={<SingleGoalCreatePage />} />
       </Routes>
     </Router>
   )

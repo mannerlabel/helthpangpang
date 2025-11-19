@@ -12,6 +12,8 @@ const ModeSelectionPage = () => {
       navigate('/jogging-mode-select')
     } else if (mode === 'crew') {
       navigate('/crew')
+    } else if (mode === 'single') {
+      navigate('/single')
     } else {
       navigate(`/exercise-select?mode=${mode}`)
     }

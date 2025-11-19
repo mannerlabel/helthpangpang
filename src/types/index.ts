@@ -208,3 +208,15 @@ export interface CrewMember {
   role: 'owner' | 'member' // 크루장 또는 멤버
 }
 
+// 싱글 모드 목표 관련 타입 (Supabase 연동 준비)
+export interface SingleGoal {
+  id: string
+  name: string // 목표명
+  exerciseType: ExerciseType // 운동 종목
+  exerciseConfig: ExerciseConfig // 운동량 (sets, reps 등)
+  alarm?: AlarmConfig // 알람 설정
+  createdAt: number // 생성 시간
+  createdBy: string // 생성자 ID (차후 Supabase user_id로 대체)
+  isActive: boolean // 활성 상태
+}
+
