@@ -39,10 +39,11 @@ const convertToKorean = (num: number): string => {
 const TrainingPage = () => {
   const location = useLocation()
   const navigate = useNavigate()
-  const { mode, config, alarm } = (location.state as {
+  const { mode, config, alarm, backgroundMusic } = (location.state as {
     mode: AppMode
     config: ExerciseConfig
     alarm?: AlarmConfig
+    backgroundMusic?: number
   }) || { mode: 'single', config: { type: 'squat', sets: 2, reps: 6 } }
   
   const [alarmNotification, setAlarmNotification] = useState<{ message: string; type: 'info' | 'warning' | 'start' } | null>(null)
@@ -245,15 +246,16 @@ const TrainingPage = () => {
             countService.reset() // 첫 세트 시작 전 카운터 리셋
             console.log('첫 세트 시작! 카운터 리셋 완료')
             
-            // 배경음악 재생
-            const savedSettings = localStorage.getItem('appSettings')
-            if (savedSettings) {
-              const parsed = JSON.parse(savedSettings)
-              const bgmId = parsed.backgroundMusic || 1
-              audioService.playBackgroundMusic(bgmId)
-            } else {
-              audioService.playBackgroundMusic(1)
-            }
+             // 배경음악 재생 (목표에 저장된 배경음악 우선, 없으면 설정에서 가져옴)
+             const bgmId = backgroundMusic || (() => {
+               const savedSettings = localStorage.getItem('appSettings')
+               if (savedSettings) {
+                 const parsed = JSON.parse(savedSettings)
+                 return parsed.backgroundMusic || 1
+               }
+               return 1
+             })()
+             audioService.playBackgroundMusic(bgmId)
           }, 0)
           
           lastSpokenCount = -1 // 리셋

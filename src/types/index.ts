@@ -215,6 +215,7 @@ export interface SingleGoal {
   exerciseType: ExerciseType // 운동 종목
   exerciseConfig: ExerciseConfig // 운동량 (sets, reps 등)
   alarm?: AlarmConfig // 알람 설정
+  backgroundMusic?: number // 배경 사운드 ID (1-6)
   createdAt: number // 생성 시간
   createdBy: string // 생성자 ID (차후 Supabase user_id로 대체)
   isActive: boolean // 활성 상태

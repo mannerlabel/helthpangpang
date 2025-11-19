@@ -106,6 +106,7 @@ const SingleModePage = () => {
         config: goal.exerciseConfig,
         alarm: goal.alarm,
         goalId: goal.id,
+        backgroundMusic: goal.backgroundMusic || 1, // 목표에 저장된 배경음악 사용
       },
     })
   }
@@ -181,7 +182,13 @@ const SingleModePage = () => {
                       </div>
                     </div>
                   </div>
-                  <div className="flex-shrink-0">
+                  <div className="flex-shrink-0 flex gap-2">
+                    <button
+                      onClick={() => navigate(`/single/goal/edit/${goal.id}`)}
+                      className="px-4 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-500 transition font-semibold whitespace-nowrap"
+                    >
+                      수정
+                    </button>
                     <button
                       onClick={() => handleStart(goal)}
                       className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition font-semibold whitespace-nowrap"

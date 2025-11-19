@@ -18,6 +18,19 @@ const ResultPage = () => {
       return
     }
 
+    // 세션을 localStorage에 저장 (차후 Supabase로 대체)
+    const savedSessions = JSON.parse(localStorage.getItem('exerciseSessions') || '[]')
+    // 중복 저장 방지 (같은 ID가 있으면 업데이트)
+    const existingIndex = savedSessions.findIndex((s: ExerciseSession) => s.id === session.id)
+    if (existingIndex !== -1) {
+      savedSessions[existingIndex] = session
+    } else {
+      savedSessions.push(session)
+    }
+    // 최근 100개만 유지
+    const recentSessions = savedSessions.slice(-100)
+    localStorage.setItem('exerciseSessions', JSON.stringify(recentSessions))
+
     const fetchAnalysis = async () => {
       try {
         const result = await aiAnalysisService.analyzeExercise(session)

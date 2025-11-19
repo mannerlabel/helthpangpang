@@ -2,6 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 스티치 점선 스타일 */
+@keyframes stitch {
+  0%, 100% {
+    background-position: 0 0;
+  }
+  50% {
+    background-position: 10px 10px;
+  }
+}
+
+.stitch-border {
+  border: 2px dashed #6b7280 !important;
+  background-image: 
+    repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(107, 114, 128, 0.2) 8px, rgba(107, 114, 128, 0.2) 16px),
+    repeating-linear-gradient(-45deg, transparent, transparent 8px, rgba(107, 114, 128, 0.2) 8px, rgba(107, 114, 128, 0.2) 16px);
+  background-size: 20px 20px;
+  animation: stitch 3s linear infinite;
+  position: relative;
+}
+
 /* 모바일 스크롤 방지 */
 html, body {
   overflow-x: hidden;

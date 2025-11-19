@@ -1,11 +1,14 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { ExerciseType, ExerciseConfig, AlarmConfig, SingleGoal } from '@/types'
+import { audioService } from '@/services/audioService'
 
 const SingleGoalCreatePage = () => {
   const navigate = useNavigate()
+  const { goalId } = useParams<{ goalId?: string }>()
+  const isEditMode = !!goalId
   
   const [goalName, setGoalName] = useState('')
   const [exerciseType, setExerciseType] = useState<ExerciseType>('squat')
@@ -16,6 +19,35 @@ const SingleGoalCreatePage = () => {
   const [alarmTime, setAlarmTime] = useState('09:00')
   const [repeatType, setRepeatType] = useState<'daily' | 'weekly' | 'custom'>('daily')
   const [repeatDays, setRepeatDays] = useState<number[]>([])
+  const [backgroundMusic, setBackgroundMusic] = useState(1)
+  const [previewingMusicId, setPreviewingMusicId] = useState<number | null>(null)
+
+  // 수정 모드일 때 기존 데이터 로드
+  useEffect(() => {
+    if (isEditMode && goalId) {
+      const savedGoals = JSON.parse(localStorage.getItem('singleGoals') || '[]')
+      const goal = savedGoals.find((g: SingleGoal) => g.id === goalId)
+      if (goal) {
+        setGoalName(goal.name)
+        setExerciseType(goal.exerciseType)
+        setSets(goal.exerciseConfig.sets)
+        setReps(goal.exerciseConfig.reps)
+        setRestTime(goal.exerciseConfig.restTime || 10)
+        setBackgroundMusic(goal.backgroundMusic || 1)
+        if (goal.alarm) {
+          setAlarmEnabled(goal.alarm.enabled)
+          setAlarmTime(goal.alarm.time)
+          setRepeatType(goal.alarm.repeatType)
+          setRepeatDays(goal.alarm.repeatDays || [])
+        }
+      }
+    }
+
+    // 컴포넌트 언마운트 시 미리듣기 정지
+    return () => {
+      audioService.stopPreview()
+    }
+  }, [isEditMode, goalId])
 
   const exercises: { value: ExerciseType; label: string }[] = [
     { value: 'squat', label: '스쿼트' },
@@ -29,6 +61,22 @@ const SingleGoalCreatePage = () => {
     setRepeatDays((prev) =>
       prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
     )
+  }
+
+  const handlePreviewMusic = (musicId: number) => {
+    if (previewingMusicId === musicId) {
+      audioService.stopPreview()
+      setPreviewingMusicId(null)
+    } else {
+      audioService.stopPreview()
+      audioService.playBackgroundMusic(musicId, true) // preview 모드
+      setPreviewingMusicId(musicId)
+      // 5초 후 자동 정지
+      setTimeout(() => {
+        audioService.stopPreview()
+        setPreviewingMusicId(null)
+      }, 5000)
+    }
   }
 
   const handleSave = () => {
@@ -59,24 +107,40 @@ const SingleGoalCreatePage = () => {
       exerciseType,
       exerciseConfig: config,
       alarm,
+      backgroundMusic,
     }
 
-    console.log('목표 생성 데이터:', goalData)
+    console.log(isEditMode ? '목표 수정 데이터:' : '목표 생성 데이터:', goalData)
     
-    // TODO: Supabase에 목표 생성 API 호출
+    // TODO: Supabase에 목표 생성/수정 API 호출
     // 현재는 localStorage에 저장 (임시)
     const savedGoals = JSON.parse(localStorage.getItem('singleGoals') || '[]')
-    const newGoal: SingleGoal = {
-      ...goalData,
-      id: `goal_${Date.now()}`,
-      createdAt: Date.now(),
-      createdBy: 'user1', // 차후 Supabase user_id로 대체
-      isActive: true,
-    }
-    savedGoals.push(newGoal)
-    localStorage.setItem('singleGoals', JSON.stringify(savedGoals))
     
-    alert('목표가 생성되었습니다!')
+    if (isEditMode && goalId) {
+      // 수정 모드
+      const goalIndex = savedGoals.findIndex((g: SingleGoal) => g.id === goalId)
+      if (goalIndex !== -1) {
+        savedGoals[goalIndex] = {
+          ...savedGoals[goalIndex],
+          ...goalData,
+        }
+        localStorage.setItem('singleGoals', JSON.stringify(savedGoals))
+        alert('목표가 수정되었습니다!')
+      }
+    } else {
+      // 생성 모드
+      const newGoal: SingleGoal = {
+        ...goalData,
+        id: `goal_${Date.now()}`,
+        createdAt: Date.now(),
+        createdBy: 'user1', // 차후 Supabase user_id로 대체
+        isActive: true,
+      }
+      savedGoals.push(newGoal)
+      localStorage.setItem('singleGoals', JSON.stringify(savedGoals))
+      alert('목표가 생성되었습니다!')
+    }
+    
     navigate('/single')
   }
 
@@ -85,7 +149,7 @@ const SingleGoalCreatePage = () => {
       <AnimatedBackground />
       <div className="max-w-2xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-4xl font-bold text-white">목표 생성</h1>
+          <h1 className="text-4xl font-bold text-white">{isEditMode ? '목표 수정' : '목표 생성'}</h1>
           <button
             onClick={() => navigate('/single')}
             className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
@@ -232,6 +296,35 @@ const SingleGoalCreatePage = () => {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* 배경 사운드 설정 */}
+          <div>
+            <label className="block text-white text-lg font-semibold mb-4">
+              배경 사운드
+            </label>
+            <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+              {[1, 2, 3, 4, 5, 6].map((musicId) => (
+                <div key={musicId} className="flex flex-col items-center">
+                  <button
+                    onClick={() => {
+                      setBackgroundMusic(musicId)
+                      handlePreviewMusic(musicId)
+                    }}
+                    className={`w-full px-4 py-3 rounded-lg font-semibold transition ${
+                      backgroundMusic === musicId
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                  >
+                    BGM {musicId}
+                  </button>
+                  {previewingMusicId === musicId && (
+                    <div className="mt-2 text-xs text-blue-400">재생 중...</div>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* 저장 버튼 */}

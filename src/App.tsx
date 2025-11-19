@@ -35,6 +35,7 @@ function App() {
         <Route path="/crew/search" element={<CrewSearchPage />} />
         <Route path="/single" element={<SingleModePage />} />
         <Route path="/single/goal/create" element={<SingleGoalCreatePage />} />
+        <Route path="/single/goal/edit/:goalId" element={<SingleGoalCreatePage />} />
       </Routes>
     </Router>
   )
