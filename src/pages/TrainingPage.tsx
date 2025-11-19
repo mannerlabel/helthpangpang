@@ -849,10 +849,6 @@ const TrainingPage = () => {
               <div className="text-sm text-gray-400 mt-1">현재: {currentCount}개</div>
               <div className="text-sm text-primary-400 mt-1 font-bold">총: {totalCount}개</div>
             </div>
-            {/* 볼륨 컨트롤 */}
-            <div className="absolute top-4 right-4 mt-20">
-              <VolumeControl />
-            </div>
             {/* 실시간 피드백 표시 */}
             {currentFeedback && (
               <motion.div
@@ -1011,6 +1007,16 @@ const TrainingPage = () => {
             </div>
           )}
         </div>
+
+        {/* 볼륨 컨트롤 */}
+        {(isStarted || isResting) && (
+          <div className="bg-gray-700/50 rounded-lg p-3">
+            <div className="text-xs text-gray-400 mb-2">볼륨</div>
+            <div className="flex items-center justify-center">
+              <VolumeControl />
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="absolute bottom-4 left-4 right-4 flex gap-4 items-center md:relative md:bottom-auto md:left-auto md:right-auto md:p-4">
@@ -1055,6 +1061,11 @@ const TrainingPage = () => {
             강제 종료
           </button>
         )}
+        {/* 데스크톱 환경 볼륨 컨트롤 */}
+        <div className="hidden md:flex items-center gap-2">
+          <span className="text-sm text-gray-400">볼륨:</span>
+          <VolumeControl />
+        </div>
         {/* 버전 표시 */}
         <div className="ml-auto text-sm text-gray-400">
           v{getVersion()}

@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import { audioService } from '@/services/audioService'
 
 interface VolumeControlProps {
@@ -9,7 +8,6 @@ interface VolumeControlProps {
 const VolumeControl = ({ className = '' }: VolumeControlProps) => {
   const [volume, setVolume] = useState(1.0)
   const [isMuted, setIsMuted] = useState(false)
-  const [showSlider, setShowSlider] = useState(false)
   const [savedVolume, setSavedVolume] = useState(1.0) // 음소거 전 볼륨 저장
 
   useEffect(() => {
@@ -52,61 +50,46 @@ const VolumeControl = ({ className = '' }: VolumeControlProps) => {
   }
 
   return (
-    <div className={`relative ${className}`}>
+    <div className={`flex items-center gap-3 ${className}`}>
       <button
         onClick={handleMute}
-        onMouseEnter={() => setShowSlider(true)}
-        onMouseLeave={() => setShowSlider(false)}
-        className="p-2 bg-black/70 rounded-lg hover:bg-black/80 transition text-white"
+        className="p-2 bg-black/70 rounded-lg hover:bg-black/80 transition text-white flex-shrink-0"
         aria-label={isMuted ? '음소거 해제' : '음소거'}
       >
         {isMuted ? (
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
           </svg>
         ) : volume === 0 ? (
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
           </svg>
         ) : volume < 0.5 ? (
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
           </svg>
         ) : (
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
           </svg>
         )}
       </button>
-
-      <AnimatePresence>
-        {showSlider && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 bg-black/90 rounded-lg p-4 z-50"
-            onMouseEnter={() => setShowSlider(true)}
-            onMouseLeave={() => setShowSlider(false)}
-          >
-            <div className="flex items-center gap-3">
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
-                value={isMuted ? 0 : volume}
-                onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-                className="w-24"
-              />
-              <span className="text-white text-sm w-10 text-right">
-                {Math.round((isMuted ? 0 : volume) * 100)}%
-              </span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      
+      <div className="flex items-center gap-2 flex-1 min-w-0">
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={isMuted ? 0 : volume}
+          onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+          className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
+        />
+        <span className="text-white text-sm w-10 text-right flex-shrink-0">
+          {Math.round((isMuted ? 0 : volume) * 100)}%
+        </span>
+      </div>
     </div>
   )
 }

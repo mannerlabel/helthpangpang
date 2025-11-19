@@ -19,7 +19,42 @@ class AudioService {
   private webAudioContext: AudioContext | null = null // Web Audio API 컨텍스트
 
   setConfig(config: Partial<AudioConfig>): void {
+    const oldVolume = this.config.volume
     this.config = { ...this.config, ...config }
+    
+    // 볼륨이 변경된 경우, 재생 중인 모든 오디오의 볼륨 업데이트
+    if (config.volume !== undefined && config.volume !== oldVolume) {
+      // 배경음악 볼륨 업데이트
+      if (this.backgroundMusic && this.backgroundMusicId !== null) {
+        try {
+          // 배경음악은 전체 볼륨의 50%로 설정
+          this.backgroundMusic.volume(config.volume * 0.5, this.backgroundMusicId)
+        } catch (e) {
+          console.warn('배경음악 볼륨 업데이트 중 오류:', e)
+        }
+      }
+      
+      // 미리듣기 볼륨 업데이트
+      if (this.previewMusic && this.previewMusicId !== null) {
+        try {
+          this.previewMusic.volume(config.volume * 0.5, this.previewMusicId)
+        } catch (e) {
+          console.warn('미리듣기 볼륨 업데이트 중 오류:', e)
+        }
+      }
+      
+      // 모든 효과음 볼륨 업데이트
+      this.sounds.forEach((sound) => {
+        try {
+          sound.volume(config.volume)
+        } catch (e) {
+          console.warn('효과음 볼륨 업데이트 중 오류:', e)
+        }
+      })
+      
+      // Web Audio API로 생성한 배경음악의 경우, config.volume이 다음 음표 재생 시 적용됨
+      // (이미 재생 중인 음표는 변경할 수 없지만, 다음 음표부터 새 볼륨이 적용됨)
+    }
   }
 
   getConfig(): AudioConfig {
