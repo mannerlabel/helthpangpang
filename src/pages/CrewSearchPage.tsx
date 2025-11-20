@@ -166,35 +166,61 @@ const CrewSearchPage = () => {
   const [searchTerm, setSearchTerm] = useState('')
   const [filteredCrews, setFilteredCrews] = useState<Crew[]>([])
   const [sortBy, setSortBy] = useState<'created' | 'recommendations'>('recommendations')
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // TODO: Supabase에서 크루 검색 API 호출
-    // 현재는 mock 데이터 필터링 및 정렬
-    let crews = [...mockCrews]
-
-    // 검색 필터링
-    if (searchTerm.trim()) {
-      crews = crews.filter((crew) =>
-        crew.name.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-    }
-
-    // 정렬: 생성일 또는 추천수 기준
-    crews.sort((a, b) => {
-      if (sortBy === 'recommendations') {
-        const aRec = a.recommendations || 0
-        const bRec = b.recommendations || 0
-        if (bRec !== aRec) return bRec - aRec
-        // 추천수가 같으면 생성일 최신순
-        return b.createdAt - a.createdAt
-      } else {
-        // 생성일 최신순
-        return b.createdAt - a.createdAt
-      }
-    })
-
-    setFilteredCrews(crews)
+    loadCrews()
   }, [searchTerm, sortBy])
+
+  const loadCrews = async () => {
+    try {
+      setLoading(true)
+      // 실제 데이터베이스에서 모든 크루 가져오기
+      let crews = await databaseService.getAllCrews()
+      console.log('로드된 크루 수:', crews.length, crews)
+
+      // 사용자가 이미 참여한 크루는 제외
+      const user = authService.getCurrentUser()
+      if (user) {
+        const myCrews = await databaseService.getCrewsByUserId(user.id)
+        const myCrewIds = new Set(myCrews.map((c) => c.id))
+        crews = crews.filter((crew) => !myCrewIds.has(crew.id))
+        console.log('참여한 크루 제외 후:', crews.length)
+      }
+
+      // 검색 필터링
+      if (searchTerm.trim()) {
+        crews = crews.filter((crew) =>
+          crew.name.toLowerCase().includes(searchTerm.toLowerCase())
+        )
+      }
+
+      // 정렬: 생성일 또는 추천수 기준
+      crews.sort((a, b) => {
+        if (sortBy === 'recommendations') {
+          const aRec = a.recommendations || 0
+          const bRec = b.recommendations || 0
+          if (bRec !== aRec) return bRec - aRec
+          // 추천수가 같으면 생성일 최신순
+          return b.createdAt - a.createdAt
+        } else {
+          // 생성일 최신순
+          return b.createdAt - a.createdAt
+        }
+      })
+
+      setFilteredCrews(crews)
+      console.log('최종 필터링된 크루:', crews.length)
+    } catch (error: any) {
+      console.error('크루 목록 로드 실패:', error)
+      console.error('에러 상세:', error?.message, error?.code, error?.details, error?.hint)
+      setFilteredCrews([])
+      // 에러 메시지를 사용자에게 표시
+      alert(`크루 목록을 불러오는데 실패했습니다: ${error?.message || String(error)}`)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const getExerciseName = (type: ExerciseType): string => {
     return EXERCISE_TYPE_NAMES[type] || '커스텀'
@@ -226,9 +252,14 @@ const CrewSearchPage = () => {
         // 현재는 databaseService 사용
         await databaseService.addCrewMember(crew.id, user.id, 'member')
         alert('크루에 참여했습니다!')
-        navigate('/crew/my-crews')
+        // 크루 목록 다시 로드하여 참여한 크루 제거
+        await loadCrews()
+        // 다른 탭/창에 변경사항 알림 (localStorage 이벤트)
+        window.dispatchEvent(new Event('storage'))
       } catch (error) {
-        alert('크루 참여에 실패했습니다.')
+        console.error('크루 참여 실패:', error)
+        const errorMessage = error instanceof Error ? error.message : '크루 참여에 실패했습니다.'
+        alert(errorMessage)
       }
     }
   }
@@ -285,7 +316,12 @@ const CrewSearchPage = () => {
           </div>
         </div>
 
-        {filteredCrews.length === 0 ? (
+        {loading ? (
+          <div className="bg-gray-800/90 rounded-2xl p-12 text-center">
+            <div className="text-6xl mb-4">⏳</div>
+            <p className="text-xl text-gray-300">크루 목록을 불러오는 중...</p>
+          </div>
+        ) : filteredCrews.length === 0 ? (
           <div className="bg-gray-800/90 rounded-2xl p-12 text-center">
             <div className="text-6xl mb-4">🔍</div>
             <p className="text-xl text-gray-300">검색 결과가 없습니다</p>

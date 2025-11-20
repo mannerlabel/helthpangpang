@@ -4,11 +4,19 @@ import { motion } from 'framer-motion'
 import { ExerciseSession, AIAnalysis } from '@/types'
 import { EXERCISE_TYPES, EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { aiAnalysisService } from '@/services/aiAnalysisService'
+import { databaseService } from '@/services/databaseService'
+import { authService } from '@/services/authService'
 
 const ResultPage = () => {
   const location = useLocation()
   const navigate = useNavigate()
   const session = location.state?.session as ExerciseSession | undefined
+  const { crewId, config, alarm, backgroundMusic } = (location.state as {
+    crewId?: string
+    config?: any
+    alarm?: any
+    backgroundMusic?: number
+  }) || {}
 
   const [analysis, setAnalysis] = useState<AIAnalysis | null>(null)
   const [loading, setLoading] = useState(true)
@@ -19,7 +27,44 @@ const ResultPage = () => {
       return
     }
 
-    // 세션을 localStorage에 저장 (차후 Supabase로 대체)
+    const saveSession = async () => {
+      try {
+        const user = authService.getCurrentUser()
+        if (!user) {
+          console.error('사용자 정보가 없습니다.')
+          return
+        }
+
+        // databaseService의 ExerciseSession 형식으로 변환
+        const dbSession = {
+          userId: user.id,
+          crewId: (session as any).crewId,
+          mode: session.mode,
+          config: session.config,
+          startTime: session.startTime || Date.now(),
+          endTime: session.endTime,
+          counts: session.counts.map((count: any) => ({
+            count: count.count,
+            timestamp: count.timestamp,
+            poseScore: count.poseScore,
+            image: count.image,
+            setNumber: count.setNumber,
+          })),
+          bestScore: session.bestScore,
+          worstScore: session.worstScore,
+          averageScore: session.averageScore,
+          completed: true,
+        }
+
+        // Supabase 또는 localStorage에 저장
+        await databaseService.createExerciseSession(dbSession)
+        console.log('✅ 운동 세션 저장 완료')
+      } catch (error) {
+        console.error('운동 세션 저장 실패:', error)
+      }
+    }
+
+    // 세션을 localStorage에도 저장 (로컬 백업)
     const savedSessions = JSON.parse(localStorage.getItem('exerciseSessions') || '[]')
     // 중복 저장 방지 (같은 ID가 있으면 업데이트)
     const existingIndex = savedSessions.findIndex((s: ExerciseSession) => s.id === session.id)
@@ -31,6 +76,9 @@ const ResultPage = () => {
     // 최근 100개만 유지
     const recentSessions = savedSessions.slice(-100)
     localStorage.setItem('exerciseSessions', JSON.stringify(recentSessions))
+
+    // Supabase에 저장
+    saveSession()
 
     const fetchAnalysis = async () => {
       try {
@@ -171,18 +219,50 @@ const ResultPage = () => {
 
         {/* 버튼 */}
         <div className="flex gap-4">
-          <button
-            onClick={() => navigate('/mode-select')}
-            className="flex-1 px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition"
-          >
-            다시 시작
-          </button>
-          <button
-            onClick={() => navigate('/mode-select')}
-            className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition"
-          >
-            홈으로
-          </button>
+          {session.mode === 'crew' && crewId ? (
+            // 크루 모드인 경우 "계속하기" 버튼 표시
+            <>
+              <button
+                onClick={() => {
+                  // 해당 크루방으로 다시 입장
+                  navigate('/training', {
+                    state: {
+                      mode: 'crew',
+                      config: config || session.config,
+                      alarm: alarm,
+                      backgroundMusic: backgroundMusic,
+                      crewId: crewId,
+                    },
+                  })
+                }}
+                className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition font-semibold"
+              >
+                계속하기
+              </button>
+              <button
+                onClick={() => navigate('/mode-select')}
+                className="flex-1 px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition"
+              >
+                홈으로
+              </button>
+            </>
+          ) : (
+            // 싱글 모드인 경우 기존 버튼 표시
+            <>
+              <button
+                onClick={() => navigate('/mode-select')}
+                className="flex-1 px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition"
+              >
+                다시 시작
+              </button>
+              <button
+                onClick={() => navigate('/mode-select')}
+                className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition"
+              >
+                홈으로
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

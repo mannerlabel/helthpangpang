@@ -15,6 +15,20 @@ const CrewListPage = () => {
 
   useEffect(() => {
     loadMyCrews()
+    
+    // storage 이벤트 리스너 추가 (다른 탭/창에서 변경사항 감지)
+    const handleStorageChange = () => {
+      loadMyCrews()
+    }
+    window.addEventListener('storage', handleStorageChange)
+    
+    // 주기적으로 목록 새로고침 (다른 PC에서의 변경사항 감지)
+    const interval = setInterval(loadMyCrews, 3000) // 3초마다
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange)
+      clearInterval(interval)
+    }
   }, [])
 
   const loadMyCrews = async () => {
@@ -22,10 +36,14 @@ const CrewListPage = () => {
     if (!user) return
 
     try {
+      console.log('사용자 ID:', user.id)
       const crews = await databaseService.getCrewsByUserId(user.id)
+      console.log('로드된 내 크루:', crews)
       setMyCrews(crews)
-    } catch (error) {
+    } catch (error: any) {
       console.error('크루 목록 로드 실패:', error)
+      console.error('에러 상세:', error?.message, error?.code, error?.details, error?.hint)
+      alert(`크루 목록을 불러오는데 실패했습니다: ${error?.message || String(error)}`)
     }
   }
 

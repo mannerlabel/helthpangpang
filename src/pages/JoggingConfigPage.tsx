@@ -38,6 +38,8 @@ const JoggingConfigPage = () => {
         humidity: 65,
         uvIndex: 5,
         condition: '맑음',
+        pm10: 45,
+        pm25: 25,
       },
       {
         date: '내일',
@@ -45,6 +47,8 @@ const JoggingConfigPage = () => {
         humidity: 70,
         uvIndex: 6,
         condition: '구름조금',
+        pm10: 50,
+        pm25: 28,
       },
       {
         date: '모레',
@@ -52,6 +56,8 @@ const JoggingConfigPage = () => {
         humidity: 60,
         uvIndex: 4,
         condition: '맑음',
+        pm10: 40,
+        pm25: 22,
       },
     ]
     setWeather(mockWeather)
@@ -279,6 +285,12 @@ const JoggingConfigPage = () => {
                     <div>습도: {w.humidity}%</div>
                     <div>자외선: {w.uvIndex}</div>
                     <div>날씨: {w.condition}</div>
+                    {w.pm10 !== undefined && (
+                      <div>미세먼지: PM10 {w.pm10}㎍/㎥</div>
+                    )}
+                    {w.pm25 !== undefined && (
+                      <div>초미세먼지: PM2.5 {w.pm25}㎍/㎥</div>
+                    )}
                   </div>
                 </motion.div>
               ))}

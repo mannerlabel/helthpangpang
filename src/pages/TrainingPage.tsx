@@ -56,6 +56,7 @@ const TrainingPage = () => {
   const [showStartDialog, setShowStartDialog] = useState(false)
 
   const [isStarted, setIsStarted] = useState(false)
+  const [isExercisePaused, setIsExercisePaused] = useState(false) // 운동 일시정지 상태
   const [currentSet, setCurrentSet] = useState(1)
   const [currentCount, setCurrentCount] = useState(0)
   const [poseScore, setPoseScore] = useState(0)
@@ -77,7 +78,155 @@ const TrainingPage = () => {
   const [myVideoEnabled, setMyVideoEnabled] = useState(false)
   const [myAudioEnabled, setMyAudioEnabled] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
+  const [meetingViewHeight, setMeetingViewHeight] = useState(120) // 바텀시트 높이
   const [isCompleted, setIsCompleted] = useState(false)
+  const [entryMessage, setEntryMessage] = useState<string | null>(null) // 입장 메시지 (데이터베이스에 저장하지 않음)
+
+  // 크루 모드: 활성 세션 등록/해제 (localStorage + Supabase)
+  useEffect(() => {
+    if (mode === 'crew' && crewId) {
+      const user = authService.getCurrentUser()
+      if (!user) return
+
+      // localStorage에 활성 세션 등록
+      const registerLocalSession = () => {
+        try {
+          const activeSessions = JSON.parse(localStorage.getItem('active_training_sessions') || '[]')
+          const sessionExists = activeSessions.some(
+            (s: { userId: string; crewId: string }) => s.userId === user.id && s.crewId === crewId
+          )
+          if (!sessionExists) {
+            activeSessions.push({ userId: user.id, crewId, timestamp: Date.now() })
+            localStorage.setItem('active_training_sessions', JSON.stringify(activeSessions))
+          } else {
+            // 타임스탬프 업데이트
+            const sessionIndex = activeSessions.findIndex(
+              (s: { userId: string; crewId: string }) => s.userId === user.id && s.crewId === crewId
+            )
+            if (sessionIndex !== -1) {
+              activeSessions[sessionIndex].timestamp = Date.now()
+              localStorage.setItem('active_training_sessions', JSON.stringify(activeSessions))
+            }
+          }
+        } catch (e) {
+          console.error('활성 세션 등록 실패:', e)
+        }
+      }
+
+      // Supabase에 활성 세션 업데이트 (crew_members 테이블의 updated_at 갱신)
+      const updateSupabaseActivity = async () => {
+        try {
+          const { supabase } = await import('@/services/supabaseClient')
+          if (supabase) {
+            // UUID 매핑
+            let supabaseUserId = user.id
+            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+            if (!uuidRegex.test(user.id)) {
+              const userStr = localStorage.getItem(`user_${user.id}`)
+              if (userStr) {
+                const userData = JSON.parse(userStr)
+                if (userData.email) {
+                  const { data: supabaseUser } = await supabase
+                    .from('users')
+                    .select('id')
+                    .eq('email', userData.email)
+                    .single()
+                  
+                  if (supabaseUser) {
+                    supabaseUserId = supabaseUser.id
+                  }
+                }
+              }
+            }
+
+            // crew_members의 video_enabled/audio_enabled를 업데이트하여 활성 상태 표시
+            // 주기적으로 업데이트하여 활성 상태 유지
+            // 활성 상태를 나타내기 위해 video_enabled를 true로 설정 (실제 카메라 상태와 무관)
+            // 참고: 실제 카메라 on/off는 별도로 관리하고, 여기서는 활성 상태만 표시
+            await supabase
+              .from('crew_members')
+              .update({ 
+                video_enabled: true, // 활성 상태 표시 (TrainingPage에 있으면 항상 true)
+                audio_enabled: myAudioEnabled,
+              })
+              .eq('crew_id', crewId)
+              .eq('user_id', supabaseUserId)
+          }
+        } catch (e) {
+          console.error('Supabase 활성 세션 업데이트 실패:', e)
+        }
+      }
+
+      registerLocalSession()
+      updateSupabaseActivity()
+
+      // 주기적으로 활성 상태 업데이트 (5초마다 - 더 빠른 동기화)
+      const activityInterval = setInterval(() => {
+        registerLocalSession()
+        updateSupabaseActivity()
+      }, 5000)
+
+      return () => {
+        clearInterval(activityInterval)
+        // 컴포넌트 언마운트 시 세션 제거 및 Supabase에서 비활성 상태로 설정
+        const cleanup = async () => {
+          try {
+            // localStorage에서 세션 제거
+            const activeSessions = JSON.parse(localStorage.getItem('active_training_sessions') || '[]')
+            const filtered = activeSessions.filter(
+              (s: { userId: string; crewId: string }) => !(s.userId === user.id && s.crewId === crewId)
+            )
+            localStorage.setItem('active_training_sessions', JSON.stringify(filtered))
+            
+            // Supabase에서 video_enabled를 false로 설정하여 비활성 상태 표시
+            try {
+              const { supabase } = await import('@/services/supabaseClient')
+              if (supabase && crewId) {
+                // UUID 매핑
+                let supabaseUserId = user.id
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+                if (!uuidRegex.test(user.id)) {
+                  const userStr = localStorage.getItem(`user_${user.id}`)
+                  if (userStr) {
+                    const userData = JSON.parse(userStr)
+                    if (userData.email) {
+                      const { data: supabaseUser } = await supabase
+                        .from('users')
+                        .select('id')
+                        .eq('email', userData.email)
+                        .single()
+                      
+                      if (supabaseUser) {
+                        supabaseUserId = supabaseUser.id
+                      }
+                    }
+                  }
+                }
+                
+                // video_enabled를 false로 설정하여 비활성 상태 표시
+                await supabase
+                  .from('crew_members')
+                  .update({ 
+                    video_enabled: false, // 나갔으므로 false로 설정
+                    audio_enabled: false,
+                  })
+                  .eq('crew_id', crewId)
+                  .eq('user_id', supabaseUserId)
+                
+                console.log('✅ 비활성 상태로 설정 완료:', supabaseUserId)
+              }
+            } catch (e) {
+              console.error('Supabase 비활성 상태 설정 실패:', e)
+            }
+          } catch (e) {
+            console.error('활성 세션 제거 실패:', e)
+          }
+        }
+        
+        cleanup()
+      }
+    }
+  }, [mode, crewId])
 
   // 조깅 모드는 별도 페이지로 리다이렉트
   useEffect(() => {
@@ -145,7 +294,7 @@ const TrainingPage = () => {
 
   // 자세 인식: 카메라가 활성화되어 있고, 운동이 시작되었거나 쉬는 시간 중일 때도 활성화 (화면 유지)
   // 쉬는 시간 중에도 자세 인식을 유지하여 화면이 꺼지지 않도록 함
-  const poseDetectionEnabled = cameraState.isActive && (isStarted || isResting)
+  const poseDetectionEnabled = cameraState.isActive && (isStarted || isResting) && !isExercisePaused
   const { poses, isInitialized: poseInitialized } = usePoseDetection(
     cameraVideoRef,
     poseDetectionEnabled
@@ -738,7 +887,16 @@ const TrainingPage = () => {
       setIsCompleted(true)
     }
     
-    navigate('/result', { state: { session: finalSession } })
+    // 크루 모드인 경우 crewId도 함께 전달
+    navigate('/result', { 
+      state: { 
+        session: finalSession,
+        crewId: mode === 'crew' ? crewId : undefined,
+        config: config,
+        alarm: alarm,
+        backgroundMusic: backgroundMusic,
+      } 
+    })
   }
 
   // 운동 종목 이름 변환
@@ -1071,15 +1229,24 @@ const TrainingPage = () => {
         {/* 볼륨 컨트롤 */}
         {(isStarted || isResting) && (
           <div className="bg-gray-700/50 rounded-lg p-3">
-            <div className="text-xs text-gray-400 mb-2">볼륨</div>
             <div className="flex items-center justify-center">
-              <VolumeControl />
+              <VolumeControl 
+                onExercisePause={setIsExercisePaused}
+                isExercisePaused={isExercisePaused}
+              />
             </div>
           </div>
         )}
       </div>
 
-      <div className="absolute bottom-4 left-4 right-4 flex gap-4 items-center md:relative md:bottom-auto md:left-auto md:right-auto md:p-4">
+      <div 
+        className={`${mode === 'crew' ? 'fixed' : 'absolute'} left-4 right-4 flex gap-4 items-center z-50 md:relative md:bottom-auto md:left-auto md:right-auto md:p-4`}
+        style={mode === 'crew' ? { 
+          bottom: `${meetingViewHeight + 16}px` // 바텀시트 높이 + 여백
+        } : {
+          bottom: '1rem'
+        }}
+      >
         <button
           onClick={() => {
             // 나가기 시 모든 오디오 즉시 정지 (동기적으로)
@@ -1104,7 +1271,7 @@ const TrainingPage = () => {
             // 즉시 페이지 이동
             navigate('/mode-select')
           }}
-          className="px-6 py-3 bg-gray-700 rounded-lg hover:bg-gray-600"
+          className="px-6 py-3 bg-gray-700 rounded-lg hover:bg-gray-600 z-50"
         >
           나가기
         </button>
@@ -1123,8 +1290,10 @@ const TrainingPage = () => {
         )}
         {/* 데스크톱 환경 볼륨 컨트롤 */}
         <div className="hidden md:flex items-center gap-2">
-          <span className="text-sm text-gray-400">볼륨:</span>
-          <VolumeControl />
+          <VolumeControl 
+            onExercisePause={setIsExercisePaused}
+            isExercisePaused={isExercisePaused}
+          />
         </div>
         {/* 버전 표시 */}
         <div className="ml-auto text-sm text-gray-400">
@@ -1144,6 +1313,8 @@ const TrainingPage = () => {
             myStatus={isCompleted ? 'completed' : isResting ? 'resting' : 'active'}
             myScore={session ? session.averageScore : undefined}
             myCurrentCount={totalCount}
+            onHeightChange={setMeetingViewHeight}
+            onEntryMessage={setEntryMessage}
           />
         </div>
       )}
@@ -1153,12 +1324,17 @@ const TrainingPage = () => {
         <>
           <button
             onClick={() => setChatOpen(true)}
-            className="fixed right-4 bottom-24 z-40 w-14 h-14 bg-purple-500 rounded-full flex items-center justify-center shadow-lg hover:bg-purple-600 transition"
+            className="fixed right-4 bottom-24 z-50 w-14 h-14 bg-purple-500 rounded-full flex items-center justify-center shadow-lg hover:bg-purple-600 transition"
             title="채팅 열기"
           >
             <span className="text-2xl">💬</span>
           </button>
-          <CrewChatPanel crewId={crewId} isOpen={chatOpen} onClose={() => setChatOpen(false)} />
+          <CrewChatPanel 
+            crewId={crewId} 
+            isOpen={chatOpen} 
+            onClose={() => setChatOpen(false)}
+            entryMessage={entryMessage}
+          />
         </>
       )}
     </div>

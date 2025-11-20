@@ -165,6 +165,8 @@ export interface WeatherInfo {
   humidity: number // 습도 (%)
   uvIndex: number // 자외선 지수
   condition: string // 날씨 상태 (맑음, 흐림 등)
+  pm10?: number // 미세먼지 (PM10)
+  pm25?: number // 초미세먼지 (PM2.5)
 }
 
 export interface JoggingData {

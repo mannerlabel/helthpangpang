@@ -13,6 +13,7 @@
     "test:coverage": "vitest --coverage"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.83.0",
     "@tensorflow-models/hand-pose-detection": "^2.0.0",
     "@tensorflow-models/pose-detection": "^2.1.1",
     "@tensorflow/tfjs": "^4.15.0",

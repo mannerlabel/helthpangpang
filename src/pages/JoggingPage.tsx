@@ -85,6 +85,12 @@ const JoggingPage = () => {
                     <div>습도: {w.humidity}%</div>
                     <div>자외선: {w.uvIndex}</div>
                     <div>날씨: {w.condition}</div>
+                    {w.pm10 !== undefined && (
+                      <div>미세먼지: PM10 {w.pm10}㎍/㎥</div>
+                    )}
+                    {w.pm25 !== undefined && (
+                      <div>초미세먼지: PM2.5 {w.pm25}㎍/㎥</div>
+                    )}
                   </div>
                 </motion.div>
               ))}
