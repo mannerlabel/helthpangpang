@@ -9,7 +9,11 @@ const JoggingModeSelectPage = () => {
 
   const handleModeSelect = (mode: JoggingMode) => {
     setSelectedMode(mode)
-    navigate('/jogging-config', { state: { mode } })
+    if (mode === 'together') {
+      navigate('/jogging-crew')
+    } else {
+      navigate('/jogging-config', { state: { mode } })
+    }
   }
 
   const modes = [

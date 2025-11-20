@@ -17,10 +17,14 @@ import EffectOverlay from '@/components/EffectOverlay'
 import SilhouetteCanvas from '@/components/SilhouetteCanvas'
 import DebugInfo from '@/components/DebugInfo'
 import VolumeControl from '@/components/VolumeControl'
+import CrewMeetingView from '@/components/CrewMeetingView'
+import CrewChatPanel from '@/components/CrewChatPanel'
 import { AppMode, ExerciseConfig, ExerciseSession, ExerciseCount, Effect, AlarmConfig, ExerciseType } from '@/types'
 import { EXERCISE_TYPE_NAMES, EXERCISE_TYPES } from '@/constants/exerciseTypes'
 import { getVersion } from '@/utils/version'
 import { alarmService } from '@/services/alarmService'
+import { databaseService } from '@/services/databaseService'
+import { authService } from '@/services/authService'
 
 // 숫자를 한국어로 변환 (하나, 둘, 셋...)
 const convertToKorean = (num: number): string => {
@@ -40,11 +44,12 @@ const convertToKorean = (num: number): string => {
 const TrainingPage = () => {
   const location = useLocation()
   const navigate = useNavigate()
-  const { mode, config, alarm, backgroundMusic } = (location.state as {
+  const { mode, config, alarm, backgroundMusic, crewId } = (location.state as {
     mode: AppMode
     config: ExerciseConfig
     alarm?: AlarmConfig
     backgroundMusic?: number
+    crewId?: string
   }) || { mode: 'single', config: { type: 'squat', sets: 2, reps: 6 } }
   
   const [alarmNotification, setAlarmNotification] = useState<{ message: string; type: 'info' | 'warning' | 'start' } | null>(null)
@@ -67,6 +72,12 @@ const TrainingPage = () => {
   const [startCountdown, setStartCountdown] = useState<number | null>(null) // 시작 카운트다운 (10초)
   const [totalCount, setTotalCount] = useState(0) // 전체 카운트 (모든 세트 합계)
   const hasStartedRef = useRef(false) // 운동이 시작되었는지 추적 (리렌더링과 무관)
+  
+  // 크루 모드 관련 상태
+  const [myVideoEnabled, setMyVideoEnabled] = useState(false)
+  const [myAudioEnabled, setMyAudioEnabled] = useState(false)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [isCompleted, setIsCompleted] = useState(false)
 
   // 조깅 모드는 별도 페이지로 리다이렉트
   useEffect(() => {
@@ -440,12 +451,61 @@ const TrainingPage = () => {
       
       setCurrentCount(newCount)
       
-      // 전체 카운트 업데이트 (모든 세트 합계)
-      setTotalCount((prev) => prev + 1)
-      
       // 카운트 완료 시 점수 저장 및 표시
       setLastCountScore(score)
-      console.log(`카운트 ${newCount} 완료! 점수: ${score}점, 총 카운트: ${totalCount + 1}, 세트: ${currentSet}`)
+      
+      // 세션 카운트 업데이트 (totalCount는 session.counts.length와 동기화)
+      const image = imageCaptureService.captureImage(cameraVideoRef.current)
+      
+      setSession((prev) => {
+        if (!prev) return prev
+        
+        const updatedCounts = [
+          ...prev.counts,
+          {
+            count: newCount,
+            timestamp: Date.now(),
+            poseScore: score,
+            image,
+            setNumber: currentSet,
+          },
+        ]
+        
+        // 현재 세트의 평균점수 계산
+        const currentSetCounts = updatedCounts.filter(c => c.setNumber === currentSet)
+        const currentSetAverage = currentSetCounts.length > 0
+          ? currentSetCounts.reduce((sum, c) => sum + c.poseScore, 0) / currentSetCounts.length
+          : 0
+        
+        // 세트별 평균점수 업데이트
+        setSetAverageScores((prev) => {
+          const newMap = new Map(prev)
+          newMap.set(currentSet, Math.round(currentSetAverage))
+          return newMap
+        })
+        
+        console.log(`카운트 ${newCount} 완료! 점수: ${score}점, 총 카운트: ${updatedCounts.length}, 세트: ${currentSet}`)
+        
+        // totalCount를 session.counts.length와 동기화
+        setTotalCount(updatedCounts.length)
+        
+        // 업데이트된 세션 생성
+        const updatedSession: ExerciseSession = {
+          ...prev,
+          counts: updatedCounts,
+        }
+        
+        // 세트 완료 체크 (setSession 업데이트 후에 실행되도록)
+        const isLastCount = newCount === config.reps
+        if (isLastCount && currentSet >= config.sets) {
+          // 모든 세트 완료 - 최신 세션 데이터를 사용하여 handleFinish 호출
+          setTimeout(() => {
+            handleFinish(updatedSession)
+          }, 0)
+        }
+        
+        return updatedSession
+      })
       
       // 2초 후 점수 표시 제거
       setTimeout(() => {
@@ -498,61 +558,19 @@ const TrainingPage = () => {
       const countEffects = createCountEffect(newCount)
       setEffects((prev) => [...prev, ...countEffects])
 
-      // 카운트 완료 시점의 이미지 캡처 (세션 기록용)
-      const image = imageCaptureService.captureImage(cameraVideoRef.current)
-
-      // 세션 카운트 업데이트
-      setSession((prev) => {
-        if (!prev) return prev
-        
-        const updatedCounts = [
-          ...prev.counts,
-          {
-            count: newCount,
-            timestamp: Date.now(),
-            poseScore: score,
-            image,
-            setNumber: currentSet,
-          },
-        ]
-        
-        // 현재 세트의 평균점수 계산
-        const currentSetCounts = updatedCounts.filter(c => c.setNumber === currentSet)
-        const currentSetAverage = currentSetCounts.length > 0
-          ? currentSetCounts.reduce((sum, c) => sum + c.poseScore, 0) / currentSetCounts.length
-          : 0
-        
-        // 세트별 평균점수 업데이트
-        setSetAverageScores((prev) => {
-          const newMap = new Map(prev)
-          newMap.set(currentSet, Math.round(currentSetAverage))
-          return newMap
-        })
-        
-        return {
-          ...prev,
-          counts: updatedCounts,
-        }
-      })
-
-      // 세트 완료 체크 (정확히 설정된 갯수와 일치해야만 완료)
-      if (newCount === config.reps) {
-        if (currentSet >= config.sets) {
-          // 모든 세트 완료
-          handleFinish()
-        } else {
-          // 다음 세트로 넘어가기 전 쉬는 시간
-          const nextSet = currentSet + 1
-          setNextSetNumber(nextSet)
-          setIsResting(true)
-          setRestCountdown(config.restTime || 10) // 설정된 쉬는 시간 사용
-          setCurrentCount(0) // 현재 세트 카운트만 0으로 리셋
-          setLastCountScore(null)
-          // 카운터 서비스 리셋 (다음 세트를 위해)
-          countService.reset()
-          // 전체 카운트는 유지 (세트별 카운트만 리셋)
-          console.log(`세트 ${currentSet} 완료! 다음 세트: ${nextSet}, 총 카운트: ${totalCount}`)
-        }
+      // 세트 완료 체크 (다음 세트로 넘어가는 경우만 처리, 모든 세트 완료는 setSession 콜백에서 처리)
+      if (newCount === config.reps && currentSet < config.sets) {
+        // 다음 세트로 넘어가기 전 쉬는 시간
+        const nextSet = currentSet + 1
+        setNextSetNumber(nextSet)
+        setIsResting(true)
+        setRestCountdown(config.restTime || 10) // 설정된 쉬는 시간 사용
+        setCurrentCount(0) // 현재 세트 카운트만 0으로 리셋
+        setLastCountScore(null)
+        // 카운터 서비스 리셋 (다음 세트를 위해)
+        countService.reset()
+        // 전체 카운트는 유지 (세트별 카운트만 리셋)
+        console.log(`세트 ${currentSet} 완료! 다음 세트: ${nextSet}, 총 카운트: ${totalCount}`)
       } else if (newCount > config.reps) {
         // 설정된 갯수를 초과한 경우 더 이상 카운트하지 않음
         console.warn(`카운트가 목표 갯수(${config.reps})를 초과했습니다. 현재: ${newCount}`)
@@ -657,14 +675,15 @@ const TrainingPage = () => {
   const handleStart = () => {
     setIsStarted(true)
     setCurrentSet(1)
-      setCurrentCount(0)
-      setLastCountScore(null)
-      setSetAverageScores(new Map())
-      setIsResting(false)
-      setRestCountdown(20)
-      setNextSetNumber(null)
-      setLastCountMission(null)
-      setMissionCompleted(false)
+    setCurrentCount(0)
+    setTotalCount(0) // 총 카운트 초기화
+    setLastCountScore(null)
+    setSetAverageScores(new Map())
+    setIsResting(false)
+    setRestCountdown(20)
+    setNextSetNumber(null)
+    setLastCountMission(null)
+    setMissionCompleted(false)
     const newSession: ExerciseSession = {
       id: `session_${Date.now()}`,
       mode,
@@ -678,17 +697,20 @@ const TrainingPage = () => {
     countService.reset()
   }
 
-  const handleFinish = () => {
+  const handleFinish = (latestSession?: ExerciseSession) => {
     // 배경음악 정지 (확실하게)
     audioService.stopBackgroundMusic()
     audioService.stopPreview()
-    if (!session) return
+    
+    // latestSession이 제공되면 사용, 아니면 현재 session state 사용
+    const sessionToUse = latestSession || session
+    if (!sessionToUse) return
 
-    // totalCount를 사용하여 정확한 총 카운트 계산
-    const actualTotalCount = totalCount > 0 ? totalCount : session.counts.length
+    // session.counts.length를 사용하여 정확한 총 카운트 계산 (totalCount와 동기화)
+    const actualTotalCount = sessionToUse.counts.length
 
     const finalSession: ExerciseSession & { totalCount?: number } = {
-      ...session,
+      ...sessionToUse,
       endTime: Date.now(),
       bestScore: bestScore
         ? { ...bestScore, timestamp: Date.now() }
@@ -697,8 +719,8 @@ const TrainingPage = () => {
         ? { ...worstScore, timestamp: Date.now() }
         : undefined,
       averageScore:
-        session.counts.length > 0
-          ? session.counts.reduce((sum, c) => sum + c.poseScore, 0) / session.counts.length
+        sessionToUse.counts.length > 0
+          ? sessionToUse.counts.reduce((sum, c) => sum + c.poseScore, 0) / sessionToUse.counts.length
           : 0,
       totalCount: actualTotalCount, // totalCount를 세션에 추가
     }
@@ -711,6 +733,11 @@ const TrainingPage = () => {
       counts: session.counts.map(c => ({ count: c.count, set: c.setNumber }))
     })
 
+    // 크루 모드일 때 완료 상태 설정
+    if (mode === 'crew') {
+      setIsCompleted(true)
+    }
+    
     navigate('/result', { state: { session: finalSession } })
   }
 
@@ -718,6 +745,44 @@ const TrainingPage = () => {
   const getExerciseName = (type: string) => {
     return EXERCISE_TYPE_NAMES[type as ExerciseType] || config.customName || '커스텀'
   }
+
+  // 크루 모드: 영상/음성 토글 업데이트
+  useEffect(() => {
+    if (mode === 'crew' && crewId) {
+      const updateMemberSettings = async () => {
+        const user = authService.getCurrentUser()
+        if (!user) return
+
+        try {
+          await databaseService.updateCrewMember(crewId, user.id, {
+            videoEnabled: myVideoEnabled,
+            audioEnabled: myAudioEnabled,
+          })
+        } catch (error) {
+          console.error('멤버 설정 업데이트 실패:', error)
+        }
+      }
+      updateMemberSettings()
+    }
+  }, [mode, crewId, myVideoEnabled, myAudioEnabled])
+
+  // 운동 완료 시 크루 모드 상태 업데이트
+  useEffect(() => {
+    if (isCompleted && mode === 'crew' && crewId) {
+      const updateCompletionStatus = async () => {
+        const user = authService.getCurrentUser()
+        if (!user) return
+
+        try {
+          // 완료 상태를 데이터베이스에 저장 (실제로는 세션에서 가져와야 함)
+          // 여기서는 예시로만 처리
+        } catch (error) {
+          console.error('완료 상태 업데이트 실패:', error)
+        }
+      }
+      updateCompletionStatus()
+    }
+  }, [isCompleted, mode, crewId])
 
   return (
     <div className="min-h-screen bg-gray-900 text-white relative overflow-hidden">
@@ -1066,6 +1131,36 @@ const TrainingPage = () => {
           v{getVersion()}
         </div>
       </div>
+
+      {/* 크루 모드: 미팅 화면 (하단) */}
+      {mode === 'crew' && crewId && (
+        <div className="fixed bottom-0 left-0 right-0 z-30">
+          <CrewMeetingView
+            crewId={crewId}
+            myVideoEnabled={myVideoEnabled}
+            myAudioEnabled={myAudioEnabled}
+            onVideoToggle={setMyVideoEnabled}
+            onAudioToggle={setMyAudioEnabled}
+            myStatus={isCompleted ? 'completed' : isResting ? 'resting' : 'active'}
+            myScore={session ? session.averageScore : undefined}
+            myCurrentCount={totalCount}
+          />
+        </div>
+      )}
+
+      {/* 크루 모드: 채팅 버튼 (오른쪽 끝) */}
+      {mode === 'crew' && crewId && (
+        <>
+          <button
+            onClick={() => setChatOpen(true)}
+            className="fixed right-4 bottom-24 z-40 w-14 h-14 bg-purple-500 rounded-full flex items-center justify-center shadow-lg hover:bg-purple-600 transition"
+            title="채팅 열기"
+          >
+            <span className="text-2xl">💬</span>
+          </button>
+          <CrewChatPanel crewId={crewId} isOpen={chatOpen} onClose={() => setChatOpen(false)} />
+        </>
+      )}
     </div>
   )
 }

@@ -200,6 +200,9 @@ export interface Crew {
   createdAt: number // 생성 시간
   createdBy: string // 생성자 ID (차후 Supabase user_id로 대체)
   memberIds: string[] // 멤버 ID 목록 (차후 Supabase 관계로 대체)
+  videoShareEnabled?: boolean // 영상 공유 활성화 여부
+  audioShareEnabled?: boolean // 음성 공유 활성화 여부
+  recommendations?: number // 추천수
 }
 
 export interface CrewMember {

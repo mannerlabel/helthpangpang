@@ -4,44 +4,30 @@ import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { Crew, ExerciseType } from '@/types'
 import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
-
-// Mock 데이터 (차후 Supabase에서 가져올 데이터)
-const mockMyCrews: Crew[] = [
-  {
-    id: 'crew1',
-    name: '헬스킹 크루',
-    maxMembers: 10,
-    currentMembers: 5,
-    exerciseType: 'squat',
-    exerciseConfig: { type: 'squat', sets: 3, reps: 15, restTime: 10 },
-    alarm: { enabled: true, time: '07:00', repeatType: 'daily' },
-    createdAt: Date.now() - 86400000 * 5,
-    createdBy: 'user1',
-    memberIds: ['user1', 'user2', 'user3', 'user4', 'user5'],
-  },
-  {
-    id: 'crew2',
-    name: '푸시업 마스터',
-    maxMembers: null,
-    currentMembers: 8,
-    exerciseType: 'pushup',
-    exerciseConfig: { type: 'pushup', sets: 4, reps: 20, restTime: 15 },
-    alarm: { enabled: true, time: '18:00', repeatType: 'weekly' },
-    createdAt: Date.now() - 86400000 * 2,
-    createdBy: 'user2',
-    memberIds: ['user1', 'user2', 'user3', 'user4', 'user5', 'user6', 'user7', 'user8'],
-  },
-]
+import { databaseService } from '@/services/databaseService'
+import { authService } from '@/services/authService'
 
 const CrewListPage = () => {
   const navigate = useNavigate()
   const [myCrews, setMyCrews] = useState<Crew[]>([])
+  const [videoEnabled, setVideoEnabled] = useState(false)
+  const [audioEnabled, setAudioEnabled] = useState(false)
 
   useEffect(() => {
-    // TODO: Supabase에서 나의 크루 목록 가져오기
-    // 현재는 mock 데이터 사용
-    setMyCrews(mockMyCrews)
+    loadMyCrews()
   }, [])
+
+  const loadMyCrews = async () => {
+    const user = authService.getCurrentUser()
+    if (!user) return
+
+    try {
+      const crews = await databaseService.getCrewsByUserId(user.id)
+      setMyCrews(crews)
+    } catch (error) {
+      console.error('크루 목록 로드 실패:', error)
+    }
+  }
 
   const getExerciseName = (type: ExerciseType): string => {
     return EXERCISE_TYPE_NAMES[type] || '커스텀'
@@ -53,8 +39,25 @@ const CrewListPage = () => {
     return `${alarm.time} (${repeatText})`
   }
 
-  const handleEnter = (crew: Crew) => {
+  const handleEnter = async (crew: Crew) => {
     // 크루 입장 - TrainingPage로 이동
+    const user = authService.getCurrentUser()
+    if (!user) {
+      alert('로그인이 필요합니다.')
+      navigate('/login')
+      return
+    }
+
+    // 크루 멤버 설정 초기화 (영상/음성 off로 시작)
+    try {
+      await databaseService.updateCrewMember(crew.id, user.id, {
+        videoEnabled: videoEnabled,
+        audioEnabled: audioEnabled,
+      })
+    } catch (error) {
+      console.error('멤버 설정 업데이트 실패:', error)
+    }
+
     navigate('/training', {
       state: {
         mode: 'crew',
@@ -65,11 +68,18 @@ const CrewListPage = () => {
     })
   }
 
-  const handleLeave = (crewId: string) => {
+  const handleLeave = async (crewId: string) => {
+    const user = authService.getCurrentUser()
+    if (!user) return
+
     if (window.confirm('정말 이 크루에서 탈퇴하시겠습니까?')) {
-      // TODO: Supabase에서 크루 탈퇴 API 호출
-      setMyCrews((prev) => prev.filter((crew) => crew.id !== crewId))
-      alert('크루에서 탈퇴했습니다')
+      try {
+        await databaseService.removeCrewMember(crewId, user.id)
+        await loadMyCrews()
+        alert('크루에서 탈퇴했습니다')
+      } catch (error) {
+        alert('크루 탈퇴에 실패했습니다.')
+      }
     }
   }
 
@@ -85,6 +95,37 @@ const CrewListPage = () => {
           >
             뒤로
           </button>
+        </div>
+
+        {/* 영상/음성 토글 버튼 */}
+        <div className="bg-gray-800/90 rounded-2xl p-4 mb-6">
+          <div className="flex items-center justify-between">
+            <span className="text-white font-semibold">나의 공유 설정</span>
+            <div className="flex gap-4">
+              <button
+                onClick={() => setVideoEnabled(!videoEnabled)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition ${
+                  videoEnabled
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+              >
+                <span>📹</span>
+                <span>영상 {videoEnabled ? 'ON' : 'OFF'}</span>
+              </button>
+              <button
+                onClick={() => setAudioEnabled(!audioEnabled)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition ${
+                  audioEnabled
+                    ? 'bg-green-500 text-white'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+              >
+                <span>🎤</span>
+                <span>음성 {audioEnabled ? 'ON' : 'OFF'}</span>
+              </button>
+            </div>
+          </div>
         </div>
 
         {myCrews.length === 0 ? (
@@ -109,7 +150,21 @@ const CrewListPage = () => {
               >
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                   <div className="flex-1">
-                    <h3 className="text-2xl font-bold text-white mb-2">{crew.name}</h3>
+                    <div className="flex items-center gap-3 mb-2">
+                      <h3 className="text-2xl font-bold text-white">{crew.name}</h3>
+                      <div className="flex items-center gap-2">
+                        {crew.videoShareEnabled && (
+                          <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-1 rounded" title="영상 공유">
+                            📹
+                          </span>
+                        )}
+                        {crew.audioShareEnabled && (
+                          <span className="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded" title="음성 공유">
+                            🎤
+                          </span>
+                        )}
+                      </div>
+                    </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                       <div>
                         <span className="text-gray-400">종목:</span>

@@ -178,7 +178,7 @@ const ResultPage = () => {
             다시 시작
           </button>
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/mode-select')}
             className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition"
           >
             홈으로

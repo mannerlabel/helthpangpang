@@ -4,6 +4,8 @@ import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { Crew, ExerciseType } from '@/types'
 import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
+import { databaseService } from '@/services/databaseService'
+import { authService } from '@/services/authService'
 
 // Mock 데이터 (차후 Supabase에서 가져올 데이터)
 const mockCrews: Crew[] = [
@@ -18,6 +20,9 @@ const mockCrews: Crew[] = [
     createdAt: Date.now() - 86400000 * 10,
     createdBy: 'user10',
     memberIds: [],
+    videoShareEnabled: true,
+    audioShareEnabled: true,
+    recommendations: 15,
   },
   {
     id: 'search2',
@@ -30,6 +35,9 @@ const mockCrews: Crew[] = [
     createdAt: Date.now() - 86400000 * 7,
     createdBy: 'user11',
     memberIds: [],
+    videoShareEnabled: false,
+    audioShareEnabled: true,
+    recommendations: 23,
   },
   {
     id: 'search3',
@@ -42,6 +50,9 @@ const mockCrews: Crew[] = [
     createdAt: Date.now() - 86400000 * 14,
     createdBy: 'user12',
     memberIds: [],
+    videoShareEnabled: true,
+    audioShareEnabled: false,
+    recommendations: 8,
   },
   {
     id: 'search4',
@@ -54,6 +65,9 @@ const mockCrews: Crew[] = [
     createdAt: Date.now() - 86400000 * 20,
     createdBy: 'user13',
     memberIds: [],
+    videoShareEnabled: true,
+    audioShareEnabled: true,
+    recommendations: 42,
   },
   {
     id: 'search5',
@@ -66,6 +80,9 @@ const mockCrews: Crew[] = [
     createdAt: Date.now() - 86400000 * 3,
     createdBy: 'user14',
     memberIds: [],
+    videoShareEnabled: false,
+    audioShareEnabled: false,
+    recommendations: 5,
   },
   {
     id: 'search6',
@@ -78,6 +95,9 @@ const mockCrews: Crew[] = [
     createdAt: Date.now() - 86400000 * 1,
     createdBy: 'user15',
     memberIds: [],
+    videoShareEnabled: true,
+    audioShareEnabled: true,
+    recommendations: 2,
   },
   {
     id: 'search7',
@@ -90,6 +110,9 @@ const mockCrews: Crew[] = [
     createdAt: Date.now() - 86400000 * 5,
     createdBy: 'user16',
     memberIds: [],
+    videoShareEnabled: true,
+    audioShareEnabled: false,
+    recommendations: 18,
   },
   {
     id: 'search8',
@@ -102,6 +125,9 @@ const mockCrews: Crew[] = [
     createdAt: Date.now() - 86400000 * 8,
     createdBy: 'user17',
     memberIds: [],
+    videoShareEnabled: false,
+    audioShareEnabled: true,
+    recommendations: 31,
   },
   {
     id: 'search9',
@@ -114,6 +140,9 @@ const mockCrews: Crew[] = [
     createdAt: Date.now() - 86400000 * 12,
     createdBy: 'user18',
     memberIds: [],
+    videoShareEnabled: true,
+    audioShareEnabled: true,
+    recommendations: 12,
   },
   {
     id: 'search10',
@@ -126,27 +155,46 @@ const mockCrews: Crew[] = [
     createdAt: Date.now() - 86400000 * 30,
     createdBy: 'user19',
     memberIds: [],
+    videoShareEnabled: true,
+    audioShareEnabled: true,
+    recommendations: 67,
   },
 ]
 
 const CrewSearchPage = () => {
   const navigate = useNavigate()
   const [searchTerm, setSearchTerm] = useState('')
-  const [filteredCrews, setFilteredCrews] = useState<Crew[]>(mockCrews)
+  const [filteredCrews, setFilteredCrews] = useState<Crew[]>([])
+  const [sortBy, setSortBy] = useState<'created' | 'recommendations'>('recommendations')
 
   useEffect(() => {
     // TODO: Supabase에서 크루 검색 API 호출
-    // 현재는 mock 데이터 필터링
+    // 현재는 mock 데이터 필터링 및 정렬
+    let crews = [...mockCrews]
+
+    // 검색 필터링
     if (searchTerm.trim()) {
-      setFilteredCrews(
-        mockCrews.filter((crew) =>
-          crew.name.toLowerCase().includes(searchTerm.toLowerCase())
-        )
+      crews = crews.filter((crew) =>
+        crew.name.toLowerCase().includes(searchTerm.toLowerCase())
       )
-    } else {
-      setFilteredCrews(mockCrews)
     }
-  }, [searchTerm])
+
+    // 정렬: 생성일 또는 추천수 기준
+    crews.sort((a, b) => {
+      if (sortBy === 'recommendations') {
+        const aRec = a.recommendations || 0
+        const bRec = b.recommendations || 0
+        if (bRec !== aRec) return bRec - aRec
+        // 추천수가 같으면 생성일 최신순
+        return b.createdAt - a.createdAt
+      } else {
+        // 생성일 최신순
+        return b.createdAt - a.createdAt
+      }
+    })
+
+    setFilteredCrews(crews)
+  }, [searchTerm, sortBy])
 
   const getExerciseName = (type: ExerciseType): string => {
     return EXERCISE_TYPE_NAMES[type] || '커스텀'
@@ -158,17 +206,36 @@ const CrewSearchPage = () => {
     return `${alarm.time} (${repeatText})`
   }
 
-  const handleJoin = (crew: Crew) => {
-    if (crew.maxMembers && crew.currentMembers >= crew.maxMembers) {
+  const handleJoin = async (crew: Crew) => {
+    const user = authService.getCurrentUser()
+    if (!user) {
+      alert('로그인이 필요합니다.')
+      navigate('/login')
+      return
+    }
+
+    // 멤버 제한 확인: 제한없음이면 항상 활성화, 제한있으면 확인
+    if (crew.maxMembers !== null && crew.currentMembers >= crew.maxMembers) {
       alert('크루 인원이 가득 찼습니다')
       return
     }
 
     if (window.confirm(`${crew.name} 크루에 참여하시겠습니까?`)) {
-      // TODO: Supabase에서 크루 참여 API 호출
-      alert('크루에 참여했습니다!')
-      navigate('/crew/my-crews')
+      try {
+        // TODO: Supabase에서 크루 참여 API 호출
+        // 현재는 databaseService 사용
+        await databaseService.addCrewMember(crew.id, user.id, 'member')
+        alert('크루에 참여했습니다!')
+        navigate('/crew/my-crews')
+      } catch (error) {
+        alert('크루 참여에 실패했습니다.')
+      }
     }
+  }
+
+  const formatDate = (timestamp: number): string => {
+    const date = new Date(timestamp)
+    return date.toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' })
   }
 
   return (
@@ -185,8 +252,8 @@ const CrewSearchPage = () => {
           </button>
         </div>
 
-        {/* 검색 바 */}
-        <div className="mb-6">
+        {/* 검색 바 및 정렬 */}
+        <div className="mb-6 space-y-4">
           <input
             type="text"
             value={searchTerm}
@@ -194,6 +261,28 @@ const CrewSearchPage = () => {
             placeholder="크루명으로 검색..."
             className="w-full px-4 py-3 bg-gray-800/90 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
           />
+          <div className="flex gap-3">
+            <button
+              onClick={() => setSortBy('recommendations')}
+              className={`px-4 py-2 rounded-lg font-semibold transition ${
+                sortBy === 'recommendations'
+                  ? 'bg-purple-500 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              추천수순
+            </button>
+            <button
+              onClick={() => setSortBy('created')}
+              className={`px-4 py-2 rounded-lg font-semibold transition ${
+                sortBy === 'created'
+                  ? 'bg-purple-500 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              최신순
+            </button>
+          </div>
         </div>
 
         {filteredCrews.length === 0 ? (
@@ -212,8 +301,22 @@ const CrewSearchPage = () => {
               >
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                   <div className="flex-1">
-                    <h3 className="text-2xl font-bold text-white mb-2">{crew.name}</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div className="flex items-center gap-3 mb-2">
+                      <h3 className="text-2xl font-bold text-white">{crew.name}</h3>
+                      <div className="flex items-center gap-2">
+                        {crew.videoShareEnabled && (
+                          <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-1 rounded" title="영상 공유">
+                            📹
+                          </span>
+                        )}
+                        {crew.audioShareEnabled && (
+                          <span className="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded" title="음성 공유">
+                            🎤
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm mb-2">
                       <div>
                         <span className="text-gray-400">종목:</span>
                         <span className="text-white ml-2">{getExerciseName(crew.exerciseType)}</span>
@@ -234,6 +337,16 @@ const CrewSearchPage = () => {
                       <div>
                         <span className="text-gray-400">알람시간:</span>
                         <span className="text-white ml-2">{formatAlarmTime(crew.alarm)}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">생성일:</span>
+                        <span className="text-white ml-2">{formatDate(crew.createdAt)}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 text-sm">
+                      <div className="flex items-center gap-1">
+                        <span className="text-yellow-400">⭐</span>
+                        <span className="text-white">{crew.recommendations || 0}</span>
                       </div>
                     </div>
                   </div>

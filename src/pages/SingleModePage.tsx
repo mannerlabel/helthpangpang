@@ -53,9 +53,13 @@ const SingleModePage = () => {
         setGoals(parsed)
       } catch (e) {
         console.error('목표 목록 파싱 오류:', e)
+        // 파싱 오류 시 mockGoals를 localStorage에 저장
+        localStorage.setItem('singleGoals', JSON.stringify(mockGoals))
         setGoals(mockGoals)
       }
     } else {
+      // localStorage가 비어있으면 mockGoals를 초기 데이터로 저장
+      localStorage.setItem('singleGoals', JSON.stringify(mockGoals))
       setGoals(mockGoals)
     }
   }, [])

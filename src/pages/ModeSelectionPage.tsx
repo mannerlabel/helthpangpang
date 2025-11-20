@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { AppMode, ExerciseSession, ExerciseType, AIAnalysis } from '@/types'
 import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { getVersion } from '@/utils/version'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { aiAnalysisService } from '@/services/aiAnalysisService'
+import { authService } from '@/services/authService'
 
 const ModeSelectionPage = () => {
   const navigate = useNavigate()
@@ -14,6 +15,7 @@ const ModeSelectionPage = () => {
   const [recentSession, setRecentSession] = useState<ExerciseSession | null>(null)
   const [recentAnalysis, setRecentAnalysis] = useState<AIAnalysis | null>(null)
   const [loading, setLoading] = useState(true)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const calculateWeeklyData = (sessions: ExerciseSession[]): { date: string; count: number }[] => {
     const today = new Date()
@@ -139,12 +141,96 @@ const ModeSelectionPage = () => {
       <div className="max-w-6xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-5xl font-bold text-white">헬스팡팡</h1>
-          <button
-            onClick={() => navigate('/settings')}
-            className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
-          >
-            설정
-          </button>
+          
+          {/* 데스크톱 메뉴 */}
+          <div className="hidden md:flex gap-3 items-center">
+            <span className="text-white text-sm">
+              {authService.getCurrentUser()?.name || '사용자'}님
+            </span>
+            <button
+              onClick={() => navigate('/settings')}
+              className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
+            >
+              설정
+            </button>
+            <button
+              onClick={() => {
+                authService.logout()
+                navigate('/login')
+              }}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+            >
+              로그아웃
+            </button>
+          </div>
+
+          {/* 모바일 햄버거 메뉴 */}
+          <div className="md:hidden relative">
+            <button
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="p-2 text-white hover:bg-gray-700 rounded-lg transition"
+            >
+              <svg
+                className="w-6 h-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                {menuOpen ? (
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                ) : (
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 6h16M4 12h16M4 18h16"
+                  />
+                )}
+              </svg>
+            </button>
+
+            {/* 모바일 메뉴 드롭다운 */}
+            <AnimatePresence>
+              {menuOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="absolute right-0 top-full mt-2 w-48 bg-gray-800 rounded-lg shadow-xl z-50 overflow-hidden"
+                >
+                  <div className="py-2">
+                    <div className="px-4 py-2 text-white text-sm border-b border-gray-700">
+                      {authService.getCurrentUser()?.name || '사용자'}님
+                    </div>
+                    <button
+                      onClick={() => {
+                        navigate('/settings')
+                        setMenuOpen(false)
+                      }}
+                      className="w-full text-left px-4 py-2 text-white hover:bg-gray-700 transition"
+                    >
+                      설정
+                    </button>
+                    <button
+                      onClick={() => {
+                        authService.logout()
+                        navigate('/login')
+                        setMenuOpen(false)
+                      }}
+                      className="w-full text-left px-4 py-2 text-red-400 hover:bg-gray-700 transition"
+                    >
+                      로그아웃
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
         <p className="text-xl text-gray-300 text-center mb-12">운동 모드를 선택하세요</p>
 

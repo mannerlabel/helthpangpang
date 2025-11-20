@@ -5,6 +5,7 @@ import { getVersion } from '@/utils/version'
 import { ExerciseSession, ExerciseType, AIAnalysis } from '@/types'
 import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { aiAnalysisService } from '@/services/aiAnalysisService'
+import { authService } from '@/services/authService'
 import AnimatedBackground from '@/components/AnimatedBackground'
 
 const HomePage = () => {
@@ -104,12 +105,24 @@ const HomePage = () => {
       <div className="max-w-6xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-5xl font-bold text-white">헬스팡팡</h1>
-          <div className="flex gap-3">
+          <div className="flex gap-3 items-center">
+            <span className="text-white text-sm">
+              {authService.getCurrentUser()?.name || '사용자'}님
+            </span>
             <button
               onClick={() => navigate('/settings')}
               className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
             >
               설정
+            </button>
+            <button
+              onClick={() => {
+                authService.logout()
+                navigate('/login')
+              }}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+            >
+              로그아웃
             </button>
             <button
               onClick={() => navigate('/mode-select')}
