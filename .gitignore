@@ -28,6 +28,11 @@ dist-ssr
 .env.local
 .env.production
 
+# SQL files (may contain sensitive data)
+*.sql
+DELETE_*.sql
+SUPABASE_*.sql
+
 # Build outputs
 build
 *.tsbuildinfo
