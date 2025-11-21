@@ -606,6 +606,11 @@ const TrainingPage = () => {
       // 세션 카운트 업데이트 (totalCount는 session.counts.length와 동기화)
       const image = imageCaptureService.captureImage(cameraVideoRef.current)
       
+      // countService에서 분석 결과 가져오기 (관절 각도, 깊이, 상태 정보 포함)
+      // strategy.analyze()의 결과를 가져오기 위해 countService의 내부 상태 확인
+      // 또는 analyzePose 호출 시 반환된 정보 사용
+      const strategyResult = (countService as any).strategy?.lastResult || null
+      
       setSession((prev) => {
         if (!prev) return prev
         
@@ -617,6 +622,9 @@ const TrainingPage = () => {
             poseScore: score,
             image,
             setNumber: currentSet,
+            angle: strategyResult?.angle, // 관절 각도 (스쿼트-무릎각도, 푸시업-팔꿈치각도, 런지-무릎각도)
+            depth: strategyResult?.depth, // 운동 깊이 (스쿼트, 런지 등)
+            state: strategyResult?.state, // 운동 상태 (standing, down, up 등)
           },
         ]
         
@@ -890,6 +898,8 @@ const TrainingPage = () => {
     }
     
     // 크루 모드인 경우 crewId도 함께 전달
+    // 싱글 모드인 경우 goalId도 함께 전달 (다시 시작을 위해)
+    const { goalId } = (location.state as { goalId?: string }) || {}
     navigate('/result', { 
       state: { 
         session: finalSession,
@@ -897,6 +907,7 @@ const TrainingPage = () => {
         config: config,
         alarm: alarm,
         backgroundMusic: backgroundMusic,
+        goalId: mode === 'single' ? goalId : undefined,
       } 
     })
   }
@@ -1099,7 +1110,7 @@ const TrainingPage = () => {
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.9 }}
-            className="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
+            className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60]"
             onClick={() => {
               if (alarmNotification.type !== 'start') {
                 setAlarmNotification(null)
@@ -1233,8 +1244,18 @@ const TrainingPage = () => {
           )}
         </div>
 
-        {/* 볼륨 컨트롤 */}
-        {(isStarted || isResting) && (
+      </div>
+
+      {/* 볼륨 컨트롤 - 나가기 버튼 위에 배치 */}
+      {(isStarted || isResting) && (
+        <div 
+          className={`${mode === 'crew' ? 'fixed' : 'absolute'} left-4 right-4 z-40 md:relative md:bottom-auto md:left-auto md:right-auto md:p-4`}
+          style={mode === 'crew' ? { 
+            bottom: `calc(${meetingViewHeight + 80}px + env(safe-area-inset-bottom, 0px))` // 나가기 버튼 위에 배치
+          } : {
+            bottom: 'calc(5rem + env(safe-area-inset-bottom, 0px))' // 나가기 버튼 위에 배치
+          }}
+        >
           <div className="bg-gray-700/50 rounded-lg p-3">
             <div className="flex items-center justify-center">
               <VolumeControl 
@@ -1243,8 +1264,8 @@ const TrainingPage = () => {
               />
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <div 
         className={`${mode === 'crew' ? 'fixed' : 'absolute'} left-4 right-4 flex gap-4 items-center z-50 md:relative md:bottom-auto md:left-auto md:right-auto md:p-4 mobile-bottom-safe`}

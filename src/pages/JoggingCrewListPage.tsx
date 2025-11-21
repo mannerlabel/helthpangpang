@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { databaseService, JoggingCrew } from '@/services/databaseService'
@@ -7,11 +7,17 @@ import { authService } from '@/services/authService'
 
 const JoggingCrewListPage = () => {
   const navigate = useNavigate()
+  const location = useLocation()
   const [myCrews, setMyCrews] = useState<JoggingCrew[]>([])
 
   useEffect(() => {
     loadMyCrews()
   }, [])
+
+  // location이 변경될 때마다 목록 다시 로드 (생성/수정 후 돌아올 때)
+  useEffect(() => {
+    loadMyCrews()
+  }, [location.key])
 
   const loadMyCrews = async () => {
     const user = authService.getCurrentUser()
@@ -67,6 +73,37 @@ const JoggingCrewListPage = () => {
         alert('조깅 크루 탈퇴에 실패했습니다.')
       }
     }
+  }
+
+  const handleEdit = (crew: JoggingCrew) => {
+    navigate(`/jogging-crew/edit/${crew.id}`, { state: { crew } })
+  }
+
+  const handleDelete = async (crew: JoggingCrew) => {
+    const user = authService.getCurrentUser()
+    if (!user) return
+
+    // 크루장인지 확인
+    if (crew.createdBy !== user.id) {
+      alert('크루장만 크루를 삭제할 수 있습니다.')
+      return
+    }
+
+    if (window.confirm('정말 이 조깅 크루를 삭제하시겠습니까? 크루와 관련된 모든 데이터가 삭제됩니다.')) {
+      try {
+        await databaseService.deleteJoggingCrew(crew.id)
+        await loadMyCrews()
+        alert('조깅 크루가 삭제되었습니다.')
+      } catch (error) {
+        console.error('조깅 크루 삭제 실패:', error)
+        alert('조깅 크루 삭제에 실패했습니다.')
+      }
+    }
+  }
+
+  const isOwner = (crew: JoggingCrew): boolean => {
+    const user = authService.getCurrentUser()
+    return user ? crew.createdBy === user.id : false
   }
 
   return (
@@ -156,12 +193,30 @@ const JoggingCrewListPage = () => {
                     >
                       입장하기
                     </button>
-                    <button
-                      onClick={() => handleLeave(crew.id)}
-                      className="px-6 py-3 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition font-semibold whitespace-nowrap"
-                    >
-                      탈퇴하기
-                    </button>
+                    {isOwner(crew) && (
+                      <>
+                        <button
+                          onClick={() => handleEdit(crew)}
+                          className="px-4 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-500 transition font-semibold whitespace-nowrap"
+                        >
+                          수정
+                        </button>
+                        <button
+                          onClick={() => handleDelete(crew)}
+                          className="px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-semibold whitespace-nowrap"
+                        >
+                          삭제
+                        </button>
+                      </>
+                    )}
+                    {!isOwner(crew) && (
+                      <button
+                        onClick={() => handleLeave(crew.id)}
+                        className="px-6 py-3 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition font-semibold whitespace-nowrap"
+                      >
+                        탈퇴하기
+                      </button>
+                    )}
                   </div>
                 </div>
               </motion.div>

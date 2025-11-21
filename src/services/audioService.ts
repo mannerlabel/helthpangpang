@@ -229,23 +229,51 @@ class AudioService {
         },
         onload: () => {
           // 파일 로드 성공
+          // 모바일 환경에서 AudioContext가 suspended 상태일 수 있으므로 resume 처리
+          const resumeAudioContext = async () => {
+            try {
+              // Howl이 내부적으로 사용하는 AudioContext에 접근
+              const howlContext = (music as any)._sounds?.[0]?._node?.context
+              if (howlContext && howlContext.state === 'suspended') {
+                await howlContext.resume()
+                console.log('AudioContext resumed for background music')
+              }
+            } catch (e) {
+              console.warn('AudioContext resume 실패:', e)
+            }
+          }
+
           if (preview) {
             // 미리듣기는 5초 재생 후 정지
             this.previewMusic = music
-            const id = music.play()
-            this.previewMusicId = id
-            setTimeout(() => {
-              if (this.previewMusic === music && this.previewMusicId === id) {
-                music.stop(id)
-                this.previewMusic = null
-                this.previewMusicId = null
-              }
-            }, 5000)
+            resumeAudioContext().then(() => {
+              const id = music.play()
+              this.previewMusicId = id
+              setTimeout(() => {
+                if (this.previewMusic === music && this.previewMusicId === id) {
+                  music.stop(id)
+                  this.previewMusic = null
+                  this.previewMusicId = null
+                }
+              }, 5000)
+            }).catch((e) => {
+              console.warn('미리듣기 재생 실패:', e)
+              // 실패해도 재생 시도
+              const id = music.play()
+              this.previewMusicId = id
+            })
           } else {
             this.backgroundMusic = music
             this.currentBackgroundMusicId = musicId
-            const id = music.play()
-            this.backgroundMusicId = id
+            resumeAudioContext().then(() => {
+              const id = music.play()
+              this.backgroundMusicId = id
+            }).catch((e) => {
+              console.warn('배경음악 재생 실패:', e)
+              // 실패해도 재생 시도
+              const id = music.play()
+              this.backgroundMusicId = id
+            })
           }
         },
       })
@@ -275,6 +303,15 @@ class AudioService {
       
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
       this.webAudioContext = audioContext
+      
+      // 모바일 환경에서 AudioContext가 suspended 상태일 수 있으므로 resume 처리
+      if (audioContext.state === 'suspended') {
+        audioContext.resume().then(() => {
+          console.log('Web Audio Context resumed for background music')
+        }).catch((e) => {
+          console.warn('Web Audio Context resume 실패:', e)
+        })
+      }
       
       // 더 완전한 멜로디 생성 (각 음악마다 다른 패턴과 리듬)
       const musicPatterns = [
@@ -469,6 +506,13 @@ class AudioService {
     // 딩동 사운드 (간단한 beep 사운드)
     // 실제로는 오디오 파일이 필요하지만, 여기서는 Web Audio API로 생성
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    
+    // 모바일 환경에서 AudioContext가 suspended 상태일 수 있으므로 resume 처리
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().catch((e) => {
+        console.warn('AudioContext resume 실패:', e)
+      })
+    }
     const oscillator = audioContext.createOscillator()
     const gainNode = audioContext.createGain()
 
@@ -490,6 +534,13 @@ class AudioService {
 
     // 팡파레 사운드 (여러 음을 연속으로)
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    
+    // 모바일 환경에서 AudioContext가 suspended 상태일 수 있으므로 resume 처리
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().catch((e) => {
+        console.warn('AudioContext resume 실패:', e)
+      })
+    }
     const notes = [523.25, 659.25, 783.99, 1046.50] // C, E, G, C (도미솔도)
 
     notes.forEach((freq, index) => {
@@ -517,6 +568,13 @@ class AudioService {
 
     // 에너지가 차오르는 듯한 효과음
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    
+    // 모바일 환경에서 AudioContext가 suspended 상태일 수 있으므로 resume 처리
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().catch((e) => {
+        console.warn('AudioContext resume 실패:', e)
+      })
+    }
     const oscillator = audioContext.createOscillator()
     const gainNode = audioContext.createGain()
 

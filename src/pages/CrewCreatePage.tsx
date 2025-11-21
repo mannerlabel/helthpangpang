@@ -1,14 +1,17 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
-import { ExerciseType, ExerciseConfig, AlarmConfig } from '@/types'
+import { ExerciseType, ExerciseConfig, AlarmConfig, Crew } from '@/types'
 import { EXERCISE_TYPES, EXERCISE_TYPE_OPTIONS } from '@/constants/exerciseTypes'
 import { databaseService } from '@/services/databaseService'
 import { authService } from '@/services/authService'
 
 const CrewCreatePage = () => {
   const navigate = useNavigate()
+  const location = useLocation()
+  const crew = (location.state as { crew?: Crew })?.crew
+  const isEditMode = !!crew
   
   const [crewName, setCrewName] = useState('')
   const [maxMembers, setMaxMembers] = useState<number | null>(null)
@@ -26,6 +29,28 @@ const CrewCreatePage = () => {
   const [audioShareEnabled, setAudioShareEnabled] = useState(true)
 
   const exercises = EXERCISE_TYPE_OPTIONS
+
+  // 수정 모드일 때 기존 데이터 로드
+  useEffect(() => {
+    if (isEditMode && crew) {
+      setCrewName(crew.name)
+      setMaxMembers(crew.maxMembers)
+      setHasMemberLimit(crew.maxMembers !== null)
+      setMemberLimit(crew.maxMembers || 10)
+      setExerciseType(crew.exerciseType)
+      setSets(crew.exerciseConfig.sets)
+      setReps(crew.exerciseConfig.reps)
+      setRestTime(crew.exerciseConfig.restTime)
+      setAlarmEnabled(!!crew.alarm)
+      if (crew.alarm) {
+        setAlarmTime(crew.alarm.time)
+        setRepeatType(crew.alarm.repeatType)
+        setRepeatDays(crew.alarm.repeatDays || [])
+      }
+      setVideoShareEnabled(crew.videoShareEnabled || false)
+      setAudioShareEnabled(crew.audioShareEnabled || false)
+    }
+  }, [isEditMode, crew])
 
   const handleSubmit = async () => {
     if (!crewName.trim()) {
@@ -57,26 +82,45 @@ const CrewCreatePage = () => {
       : undefined
 
     try {
-      await databaseService.createCrew({
-        name: crewName,
-        maxMembers: hasMemberLimit ? (maxMembers || memberLimit) : null,
-        exerciseType,
-        exerciseConfig: {
-          type: config.type,
-          sets: config.sets,
-          reps: config.reps,
-          restTime: config.restTime || 10,
-        },
-        alarm,
-        createdBy: user.id,
-        videoShareEnabled,
-        audioShareEnabled,
-      })
-
-      alert('크루가 생성되었습니다!')
+      if (isEditMode && crew) {
+        // 수정 모드
+        await databaseService.updateCrew(crew.id, {
+          name: crewName,
+          maxMembers: hasMemberLimit ? (maxMembers || memberLimit) : null,
+          exerciseType,
+          exerciseConfig: {
+            type: config.type,
+            sets: config.sets,
+            reps: config.reps,
+            restTime: config.restTime || 10,
+          },
+          alarm,
+          videoShareEnabled,
+          audioShareEnabled,
+        })
+        alert('크루가 수정되었습니다!')
+      } else {
+        // 생성 모드
+        await databaseService.createCrew({
+          name: crewName,
+          maxMembers: hasMemberLimit ? (maxMembers || memberLimit) : null,
+          exerciseType,
+          exerciseConfig: {
+            type: config.type,
+            sets: config.sets,
+            reps: config.reps,
+            restTime: config.restTime || 10,
+          },
+          alarm,
+          createdBy: user.id,
+          videoShareEnabled,
+          audioShareEnabled,
+        })
+        alert('크루가 생성되었습니다!')
+      }
       navigate('/crew/my-crews')
     } catch (error) {
-      alert('크루 생성에 실패했습니다.')
+      alert(isEditMode ? '크루 수정에 실패했습니다.' : '크루 생성에 실패했습니다.')
       console.error(error)
     }
   }
@@ -94,9 +138,9 @@ const CrewCreatePage = () => {
       <AnimatedBackground />
       <div className="max-w-2xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-4xl font-bold text-white">크루 생성</h1>
+          <h1 className="text-4xl font-bold text-white">{isEditMode ? '크루 수정' : '크루 생성'}</h1>
           <button
-            onClick={() => navigate('/crew')}
+            onClick={() => navigate('/crew/my-crews')}
             className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
           >
             뒤로
@@ -310,10 +354,10 @@ const CrewCreatePage = () => {
             )}
           </div>
 
-          {/* 생성 버튼 */}
+          {/* 생성/수정 버튼 */}
           <div className="flex gap-4 pt-4">
             <button
-              onClick={() => navigate('/crew')}
+              onClick={() => navigate('/crew/my-crews')}
               className="flex-1 px-6 py-3 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition font-semibold"
             >
               취소
@@ -322,7 +366,7 @@ const CrewCreatePage = () => {
               onClick={handleSubmit}
               className="flex-1 px-6 py-3 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition font-semibold"
             >
-              크루 생성
+              {isEditMode ? '크루 수정' : '크루 생성'}
             </button>
           </div>
         </div>

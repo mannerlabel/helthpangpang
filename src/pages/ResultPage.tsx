@@ -1,24 +1,83 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ExerciseSession, AIAnalysis } from '@/types'
 import { aiAnalysisService } from '@/services/aiAnalysisService'
 import { databaseService } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { imageCaptureService } from '@/services/imageCaptureService'
+import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 
 const ResultPage = () => {
   const location = useLocation()
   const navigate = useNavigate()
   const session = location.state?.session as ExerciseSession | undefined
-  const { crewId, config, alarm, backgroundMusic } = (location.state as {
+  const { crewId, config, alarm, backgroundMusic, goalId } = (location.state as {
     crewId?: string
     config?: any
     alarm?: any
     backgroundMusic?: number
+    goalId?: string
   }) || {}
 
   const [analysis, setAnalysis] = useState<AIAnalysis | null>(null)
   const [loading, setLoading] = useState(true)
+  
+  // 운동 내역 관련 상태
+  const [historySessions, setHistorySessions] = useState<ExerciseSession[]>([])
+  const [currentHistoryIndex, setCurrentHistoryIndex] = useState(0)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyOffset, setHistoryOffset] = useState(0)
+  const [hasMoreHistory, setHasMoreHistory] = useState(true)
+  const historyContainerRef = useRef<HTMLDivElement>(null)
+  
+  // 스와이프 관련 상태
+  const [touchStart, setTouchStart] = useState<number | null>(null)
+  const [touchEnd, setTouchEnd] = useState<number | null>(null)
+
+  // 운동 내역 로드 함수
+  const loadExerciseHistory = useCallback(async (offset: number = 0, append: boolean = false) => {
+    try {
+      const user = authService.getCurrentUser()
+      if (!user) return
+
+      setHistoryLoading(true)
+      const result = await databaseService.getExerciseSessionsByUserId(user.id, {
+        limit: 3,
+        offset: offset,
+        orderBy: 'end_time',
+        orderDirection: 'desc',
+      })
+
+      if (!append && offset === 0) {
+        // 첫 로드: 현재 세션을 포함하여 표시
+        // 현재 세션이 이미 포함되어 있는지 확인
+        const currentSessionInHistory = result.sessions.find(s => s.id === session?.id)
+        if (!currentSessionInHistory && session) {
+          // 현재 세션을 첫 번째로 추가
+          setHistorySessions([session as any, ...result.sessions])
+          setCurrentHistoryIndex(0)
+        } else {
+          setHistorySessions(result.sessions)
+          // 현재 세션의 인덱스 찾기
+          const index = result.sessions.findIndex(s => s.id === session?.id)
+          setCurrentHistoryIndex(index >= 0 ? index : 0)
+        }
+      } else if (append) {
+        // 추가 로드: 기존 세션에 추가
+        setHistorySessions(prev => [...prev, ...result.sessions])
+      } else {
+        // 이전 페이지 로드: 기존 세션을 교체
+        setHistorySessions(result.sessions)
+      }
+
+      setHasMoreHistory(result.hasMore)
+    } catch (error) {
+      console.error('운동 내역 로드 실패:', error)
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [session])
 
   useEffect(() => {
     if (!session) {
@@ -26,12 +85,52 @@ const ResultPage = () => {
       return
     }
 
-    const saveSession = async () => {
+    const saveSession = async (analysisResult?: AIAnalysis) => {
       try {
         const user = authService.getCurrentUser()
         if (!user) {
           console.error('사용자 정보가 없습니다.')
           return
+        }
+
+        // bestScore와 worstScore 이미지 리사이즈 (모바일 최적화)
+        let resizedBestScore = session.bestScore
+        let resizedWorstScore = session.worstScore
+
+        if (session.bestScore?.image) {
+          try {
+            const resizedImage = await imageCaptureService.resizeImageForMobile(
+              session.bestScore.image,
+              800, // maxWidth
+              800, // maxHeight
+              0.7  // quality
+            )
+            resizedBestScore = {
+              ...session.bestScore,
+              image: resizedImage,
+            }
+          } catch (error) {
+            console.error('최고 점수 이미지 리사이즈 실패:', error)
+            // 리사이즈 실패 시 원본 사용
+          }
+        }
+
+        if (session.worstScore?.image) {
+          try {
+            const resizedImage = await imageCaptureService.resizeImageForMobile(
+              session.worstScore.image,
+              800, // maxWidth
+              800, // maxHeight
+              0.7  // quality
+            )
+            resizedWorstScore = {
+              ...session.worstScore,
+              image: resizedImage,
+            }
+          } catch (error) {
+            console.error('최저 점수 이미지 리사이즈 실패:', error)
+            // 리사이즈 실패 시 원본 사용
+          }
         }
 
         // databaseService의 ExerciseSession 형식으로 변환
@@ -53,18 +152,60 @@ const ResultPage = () => {
             poseScore: count.poseScore,
             image: count.image,
             setNumber: count.setNumber,
+            angle: count.angle, // 관절 각도
+            depth: count.depth, // 운동 깊이
+            state: count.state, // 운동 상태
           })),
-          bestScore: session.bestScore,
-          worstScore: session.worstScore,
+          bestScore: resizedBestScore,
+          worstScore: resizedWorstScore,
           averageScore: session.averageScore,
           completed: true,
+          analysis: analysisResult, // AI 분석 결과 포함
         }
 
         // Supabase 또는 localStorage에 저장
-        await databaseService.createExerciseSession(dbSession)
-        console.log('✅ 운동 세션 저장 완료')
+        console.log('💾 운동 세션 저장 시작:', {
+          userId: user.id,
+          userEmail: user.email,
+          userName: user.name,
+          mode: dbSession.mode,
+          completed: dbSession.completed,
+          countsLength: dbSession.counts.length,
+          hasBestScore: !!dbSession.bestScore,
+          hasWorstScore: !!dbSession.worstScore,
+          hasAnalysis: !!dbSession.analysis,
+        })
+        
+        const savedSession = await databaseService.createExerciseSession(dbSession)
+        
+        console.log('✅ 운동 세션 저장 완료:', {
+          sessionId: savedSession?.id,
+          userId: savedSession?.userId,
+          completed: savedSession?.completed,
+        })
+        
+        // 저장 후 즉시 확인
+        if (savedSession) {
+          const verifyResult = await databaseService.getExerciseSessionsByUserId(user.id, {
+            limit: 1,
+            offset: 0,
+            orderBy: 'end_time',
+            orderDirection: 'desc',
+          })
+          console.log('🔍 저장 후 확인:', {
+            foundSessions: verifyResult.sessions.length,
+            latestSessionId: verifyResult.sessions[0]?.id,
+            matches: verifyResult.sessions[0]?.id === savedSession.id,
+          })
+        }
+        
+        // 저장 완료 후 운동 내역 로드
+        await loadExerciseHistory(0, false)
+        
+        return savedSession
       } catch (error) {
         console.error('운동 세션 저장 실패:', error)
+        return null
       }
     }
 
@@ -81,22 +222,109 @@ const ResultPage = () => {
     const recentSessions = savedSessions.slice(-100)
     localStorage.setItem('exerciseSessions', JSON.stringify(recentSessions))
 
-    // Supabase에 저장
-    saveSession()
-
+    // AI 분석 후 세션 저장
     const fetchAnalysis = async () => {
       try {
         const result = await aiAnalysisService.analyzeExercise(session)
         setAnalysis(result)
+        
+        // 분석 결과와 함께 세션 저장
+        await saveSession(result)
       } catch (error) {
         console.error('분석 오류:', error)
+        // 분석 실패 시에도 세션은 저장
+        await saveSession()
       } finally {
         setLoading(false)
       }
     }
 
     fetchAnalysis()
-  }, [session, navigate])
+  }, [session, navigate, loadExerciseHistory])
+
+  // 이전 운동 내역으로 이동
+  const goToPreviousHistory = async () => {
+    if (currentHistoryIndex > 0) {
+      setCurrentHistoryIndex(currentHistoryIndex - 1)
+    } else if (historyOffset > 0) {
+      // 이전 페이지 로드
+      const newOffset = Math.max(0, historyOffset - 3)
+      setHistoryOffset(newOffset)
+      await loadExerciseHistory(newOffset, false)
+      // 로드된 세션의 마지막 인덱스로 설정
+      setTimeout(() => {
+        setHistorySessions(prev => {
+          setCurrentHistoryIndex(prev.length - 1)
+          return prev
+        })
+      }, 100)
+    }
+  }
+
+  // 다음 운동 내역으로 이동
+  const goToNextHistory = async () => {
+    if (currentHistoryIndex < historySessions.length - 1) {
+      setCurrentHistoryIndex(currentHistoryIndex + 1)
+    } else if (hasMoreHistory) {
+      // 다음 페이지 로드
+      const newOffset = historyOffset + 3
+      setHistoryOffset(newOffset)
+      const prevLength = historySessions.length
+      await loadExerciseHistory(newOffset, true)
+      // 새로 로드된 첫 번째 항목으로 이동
+      setCurrentHistoryIndex(prevLength)
+    }
+  }
+
+  // 스와이프 제스처 처리
+  const minSwipeDistance = 50
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    setTouchEnd(null)
+    setTouchStart(e.targetTouches[0].clientX)
+  }
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    setTouchEnd(e.targetTouches[0].clientX)
+  }
+
+  const onTouchEnd = () => {
+    if (!touchStart || !touchEnd) return
+    const distance = touchStart - touchEnd
+    const isLeftSwipe = distance > minSwipeDistance
+    const isRightSwipe = distance < -minSwipeDistance
+
+    if (isLeftSwipe) {
+      goToNextHistory()
+    }
+    if (isRightSwipe) {
+      goToPreviousHistory()
+    }
+  }
+
+  // 현재 표시할 운동 내역
+  const currentHistorySession = historySessions[currentHistoryIndex] || session
+
+  // 날짜 포맷 함수
+  const formatDate = (timestamp?: number): string => {
+    if (!timestamp) return '-'
+    const date = new Date(timestamp)
+    return date.toLocaleDateString('ko-KR', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    })
+  }
+
+  const formatTime = (timestamp?: number): string => {
+    if (!timestamp) return '-'
+    const date = new Date(timestamp)
+    return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+  }
+
+  const getExerciseName = (type: string): string => {
+    return EXERCISE_TYPE_NAMES[type as keyof typeof EXERCISE_TYPE_NAMES] || type || '커스텀'
+  }
 
   if (!session) return null
 
@@ -106,6 +334,109 @@ const ResultPage = () => {
         <h1 className="text-4xl font-bold text-white mb-8 text-center">
           운동 완료! 🎉
         </h1>
+
+        {/* 운동 내역 탐색 섹션 */}
+        {historySessions.length > 0 && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold text-white">운동 내역</h2>
+              <div className="text-sm text-gray-400">
+                {currentHistoryIndex + 1} / {historySessions.length}
+                {hasMoreHistory && ' +'}
+              </div>
+            </div>
+            
+            <div
+              ref={historyContainerRef}
+              className="relative bg-gray-800 rounded-xl p-6"
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
+            >
+              {/* 좌우 네비게이션 버튼 */}
+              <button
+                onClick={goToPreviousHistory}
+                disabled={currentHistoryIndex === 0 && historyOffset === 0}
+                className={`absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-gray-700 text-white flex items-center justify-center transition ${
+                  currentHistoryIndex === 0 && historyOffset === 0
+                    ? 'opacity-50 cursor-not-allowed'
+                    : 'hover:bg-gray-600'
+                }`}
+              >
+                ←
+              </button>
+              
+              <button
+                onClick={goToNextHistory}
+                disabled={currentHistoryIndex === historySessions.length - 1 && !hasMoreHistory}
+                className={`absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-gray-700 text-white flex items-center justify-center transition ${
+                  currentHistoryIndex === historySessions.length - 1 && !hasMoreHistory
+                    ? 'opacity-50 cursor-not-allowed'
+                    : 'hover:bg-gray-600'
+                }`}
+              >
+                →
+              </button>
+
+              {/* 현재 운동 내역 표시 */}
+              {currentHistorySession && (
+                <motion.div
+                  key={currentHistorySession.id}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  className="px-12"
+                >
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div>
+                      <div className="text-sm text-gray-400 mb-1">운동 종목</div>
+                      <div className="text-lg font-semibold text-white">
+                        {getExerciseName(currentHistorySession.config?.type || '')}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-sm text-gray-400 mb-1">총 카운트</div>
+                      <div className="text-lg font-semibold text-blue-400">
+                        {(currentHistorySession as any).totalCount || currentHistorySession.counts.length}개
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-sm text-gray-400 mb-1">평균 점수</div>
+                      <div className="text-lg font-semibold text-yellow-400">
+                        {Math.round(currentHistorySession.averageScore)}점
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-sm text-gray-400 mb-1">운동 날짜</div>
+                      <div className="text-lg font-semibold text-white">
+                        {formatDate(currentHistorySession.endTime || currentHistorySession.startTime)}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {formatTime(currentHistorySession.endTime || currentHistorySession.startTime)}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {currentHistorySession.bestScore && (
+                    <div className="mt-4 pt-4 border-t border-gray-600">
+                      <div className="text-sm text-gray-400 mb-2">최고 점수: {currentHistorySession.bestScore.score}점</div>
+                      <img
+                        src={currentHistorySession.bestScore.image}
+                        alt="최고 점수"
+                        className="w-full max-w-xs rounded-lg"
+                      />
+                    </div>
+                  )}
+                </motion.div>
+              )}
+
+              {/* 스와이프 안내 */}
+              <div className="text-center mt-4 text-xs text-gray-500">
+                좌우 스와이프 또는 버튼으로 이전/다음 운동 내역 확인
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 통계 */}
         <div className="grid grid-cols-3 gap-4 mb-8">
@@ -176,50 +507,56 @@ const ResultPage = () => {
           <div className="bg-gray-800 rounded-xl p-8 text-center">
             <div className="text-white">분석 중...</div>
           </div>
-        ) : analysis ? (
+        ) : (analysis || currentHistorySession.analysis) ? (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             className="bg-gray-800 rounded-xl p-8 mb-8"
           >
             <h2 className="text-2xl font-bold text-white mb-4">AI 분석 결과</h2>
-            <div className="space-y-4">
-              <div>
-                <h3 className="text-lg font-semibold text-primary-400 mb-2">
-                  요약
-                </h3>
-                <p className="text-gray-300">{analysis.summary}</p>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-green-400 mb-2">
-                  최고 자세 피드백
-                </h3>
-                <p className="text-gray-300">{analysis.bestPoseFeedback}</p>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-red-400 mb-2">
-                  최저 자세 피드백
-                </h3>
-                <p className="text-gray-300">{analysis.worstPoseFeedback}</p>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-yellow-400 mb-2">
-                  추천 사항
-                </h3>
-                <ul className="list-disc list-inside text-gray-300 space-y-1">
-                  {analysis.recommendations.map((rec, index) => (
-                    <li key={index}>{rec}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
+            {(() => {
+              const displayAnalysis = analysis || currentHistorySession.analysis
+              if (!displayAnalysis) return null
+              return (
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-primary-400 mb-2">
+                      요약
+                    </h3>
+                    <p className="text-gray-300">{displayAnalysis.summary}</p>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-green-400 mb-2">
+                      최고 자세 피드백
+                    </h3>
+                    <p className="text-gray-300">{displayAnalysis.bestPoseFeedback}</p>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-red-400 mb-2">
+                      최저 자세 피드백
+                    </h3>
+                    <p className="text-gray-300">{displayAnalysis.worstPoseFeedback}</p>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-yellow-400 mb-2">
+                      추천 사항
+                    </h3>
+                    <ul className="list-disc list-inside text-gray-300 space-y-1">
+                      {displayAnalysis.recommendations.map((rec, index) => (
+                        <li key={index}>{rec}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )
+            })()}
           </motion.div>
         ) : null}
 
         {/* 버튼 */}
         <div className="flex gap-4">
           {session.mode === 'crew' && crewId ? (
-            // 크루 모드인 경우 "계속하기" 버튼 표시
+            // 크루 모드인 경우
             <>
               <button
                 onClick={() => {
@@ -234,22 +571,58 @@ const ResultPage = () => {
                     },
                   })
                 }}
-                className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition font-semibold"
+                className="flex-1 px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition font-semibold"
               >
-                계속하기
+                다시 시작
               </button>
               <button
                 onClick={() => navigate('/mode-select')}
-                className="flex-1 px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition"
+                className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition"
               >
                 홈으로
               </button>
             </>
           ) : (
-            // 싱글 모드인 경우 기존 버튼 표시
+            // 싱글 모드인 경우
             <>
               <button
-                onClick={() => navigate('/mode-select')}
+                onClick={async () => {
+                  // goalId가 있으면 해당 목표로 다시 시작
+                  if (goalId) {
+                    try {
+                      const goal = await databaseService.getSingleGoalById(goalId)
+                      if (goal) {
+                        navigate('/training', {
+                          state: {
+                            mode: 'single',
+                            config: goal.exerciseConfig,
+                            alarm: goal.alarm,
+                            goalId: goal.id,
+                            backgroundMusic: goal.backgroundMusic || 1,
+                          },
+                        })
+                        return
+                      }
+                    } catch (error) {
+                      console.error('목표 로드 실패:', error)
+                    }
+                  }
+                  // goalId가 없거나 로드 실패 시 기존 config로 다시 시작
+                  if (config) {
+                    navigate('/training', {
+                      state: {
+                        mode: 'single',
+                        config: config,
+                        alarm: alarm,
+                        backgroundMusic: backgroundMusic,
+                        goalId: goalId,
+                      },
+                    })
+                  } else {
+                    // config도 없으면 모드 선택으로 이동
+                    navigate('/mode-select')
+                  }
+                }}
                 className="flex-1 px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition"
               >
                 다시 시작

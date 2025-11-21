@@ -2,22 +2,19 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
-import { ExerciseType, ExerciseConfig, AlarmConfig, SingleGoal } from '@/types'
-import { EXERCISE_TYPES, EXERCISE_TYPE_OPTIONS } from '@/constants/exerciseTypes'
+import { AlarmConfig, JoggingGoal } from '@/types'
 import { audioService } from '@/services/audioService'
 import { databaseService } from '@/services/databaseService'
 import { authService } from '@/services/authService'
 
-const SingleGoalCreatePage = () => {
+const JoggingGoalCreatePage = () => {
   const navigate = useNavigate()
   const { goalId } = useParams<{ goalId?: string }>()
   const isEditMode = !!goalId
   
   const [goalName, setGoalName] = useState('')
-  const [exerciseType, setExerciseType] = useState<ExerciseType>(EXERCISE_TYPES.SQUAT)
-  const [sets, setSets] = useState(3)
-  const [reps, setReps] = useState(10)
-  const [restTime, setRestTime] = useState(10)
+  const [targetDistance, setTargetDistance] = useState<number | undefined>(undefined)
+  const [targetTime, setTargetTime] = useState<number | undefined>(undefined)
   const [alarmEnabled, setAlarmEnabled] = useState(false)
   const [alarmTime, setAlarmTime] = useState('09:00')
   const [repeatType, setRepeatType] = useState<'daily' | 'weekly' | 'custom'>('daily')
@@ -25,36 +22,55 @@ const SingleGoalCreatePage = () => {
   const [backgroundMusic, setBackgroundMusic] = useState(1)
   const [previewingMusicId, setPreviewingMusicId] = useState<number | null>(null)
 
+  // 현재 시간을 기본값으로 설정
+  const getCurrentTime = (): string => {
+    const now = new Date()
+    const hours = now.getHours().toString().padStart(2, '0')
+    const minutes = now.getMinutes().toString().padStart(2, '0')
+    return `${hours}:${minutes}`
+  }
+
   // 수정 모드일 때 기존 데이터 로드
   useEffect(() => {
-    if (isEditMode && goalId) {
-      const savedGoals = JSON.parse(localStorage.getItem('singleGoals') || '[]')
-      const goal = savedGoals.find((g: SingleGoal) => g.id === goalId)
-      if (goal) {
-        setGoalName(goal.name)
-        setExerciseType(goal.exerciseType)
-        setSets(goal.exerciseConfig.sets)
-        setReps(goal.exerciseConfig.reps)
-        setRestTime(goal.exerciseConfig.restTime || 10)
-        setBackgroundMusic(goal.backgroundMusic || 1)
-        if (goal.alarm) {
-          setAlarmEnabled(goal.alarm.enabled)
-          setAlarmTime(goal.alarm.time)
-          setRepeatType(goal.alarm.repeatType)
-          setRepeatDays(goal.alarm.repeatDays || [])
+    const loadGoal = async () => {
+      if (isEditMode && goalId) {
+        try {
+          const user = authService.getCurrentUser()
+          if (!user) return
+          
+          const goals = await databaseService.getJoggingGoalsByUserId(user.id)
+          const goal = goals.find((g: JoggingGoal) => g.id === goalId)
+          
+          if (goal) {
+            setGoalName(goal.name)
+            setTargetDistance(goal.targetDistance)
+            setTargetTime(goal.targetTime)
+            setAlarmEnabled(!!goal.alarm)
+            if (goal.alarm) {
+              setAlarmTime(goal.alarm.time)
+              setRepeatType(goal.alarm.repeatType)
+              setRepeatDays(goal.alarm.repeatDays || [])
+            }
+            setBackgroundMusic(goal.backgroundMusic || 1)
+          }
+        } catch (error) {
+          console.error('목표 로드 실패:', error)
         }
+      } else {
+        setAlarmTime(getCurrentTime())
       }
     }
-
-    // 컴포넌트 언마운트 시 미리듣기 정지
-    return () => {
-      audioService.stopPreview()
-    }
+    loadGoal()
   }, [isEditMode, goalId])
 
-  const exercises = EXERCISE_TYPE_OPTIONS
-
-  const dayLabels = ['일', '월', '화', '수', '목', '금', '토']
+  const handlePreviewMusic = (musicId: number) => {
+    audioService.playPreview(musicId)
+    setPreviewingMusicId(musicId)
+    setTimeout(() => {
+      audioService.stopPreview()
+      setPreviewingMusicId(null)
+    }, 5000)
+  }
 
   const handleDayToggle = (day: number) => {
     setRepeatDays((prev) =>
@@ -62,21 +78,7 @@ const SingleGoalCreatePage = () => {
     )
   }
 
-  const handlePreviewMusic = (musicId: number) => {
-    if (previewingMusicId === musicId) {
-      audioService.stopPreview()
-      setPreviewingMusicId(null)
-    } else {
-      audioService.stopPreview()
-      audioService.playBackgroundMusic(musicId, true) // preview 모드
-      setPreviewingMusicId(musicId)
-      // 5초 후 자동 정지
-      setTimeout(() => {
-        audioService.stopPreview()
-        setPreviewingMusicId(null)
-      }, 5000)
-    }
-  }
+  const daysOfWeek = ['일', '월', '화', '수', '목', '금', '토']
 
   const handleSave = async () => {
     if (!goalName.trim()) {
@@ -91,13 +93,6 @@ const SingleGoalCreatePage = () => {
       return
     }
 
-    const config: ExerciseConfig = {
-      type: exerciseType,
-      sets,
-      reps,
-      restTime,
-    }
-
     const alarm: AlarmConfig | undefined = alarmEnabled
       ? {
           enabled: true,
@@ -107,10 +102,10 @@ const SingleGoalCreatePage = () => {
         }
       : undefined
 
-    const goalData: Omit<SingleGoal, 'id' | 'createdAt' | 'createdBy' | 'isActive'> = {
+    const goalData: Omit<JoggingGoal, 'id' | 'createdAt' | 'createdBy' | 'isActive'> = {
       name: goalName,
-      exerciseType,
-      exerciseConfig: config,
+      targetDistance,
+      targetTime,
       alarm,
       backgroundMusic,
     }
@@ -118,18 +113,18 @@ const SingleGoalCreatePage = () => {
     try {
       if (isEditMode && goalId) {
         // 수정 모드
-        await databaseService.updateSingleGoal(goalId, goalData)
+        await databaseService.updateJoggingGoal(goalId, goalData)
         alert('목표가 수정되었습니다!')
       } else {
         // 생성 모드
-        await databaseService.createSingleGoal({
+        await databaseService.createJoggingGoal({
           ...goalData,
           createdBy: user.id,
         })
         alert('목표가 생성되었습니다!')
       }
       
-      navigate('/single')
+      navigate('/jogging-alone')
     } catch (error) {
       console.error('목표 저장 실패:', error)
       alert('목표 저장에 실패했습니다.')
@@ -139,11 +134,11 @@ const SingleGoalCreatePage = () => {
   return (
     <div className="min-h-screen p-8 overflow-hidden relative">
       <AnimatedBackground />
-      <div className="max-w-2xl mx-auto relative z-10">
+      <div className="max-w-4xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-4xl font-bold text-white">{isEditMode ? '목표 수정' : '목표 생성'}</h1>
           <button
-            onClick={() => navigate('/single')}
+            onClick={() => navigate('/jogging-alone')}
             className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
           >
             뒤로
@@ -165,83 +160,61 @@ const SingleGoalCreatePage = () => {
             />
           </div>
 
-          {/* 운동 종목 */}
+          {/* 목표 거리 */}
           <div>
             <label className="block text-white text-lg font-semibold mb-2">
-              운동 종목 *
+              목표 거리 (km)
             </label>
-            <div className="grid grid-cols-3 gap-3">
-              {exercises.map((exercise) => (
-                <button
-                  key={exercise.value}
-                  onClick={() => setExerciseType(exercise.value)}
-                  className={`px-4 py-3 rounded-lg font-semibold transition ${
-                    exerciseType === exercise.value
-                      ? 'bg-blue-500 text-white'
-                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                  }`}
-                >
-                  {exercise.label}
-                </button>
-              ))}
-            </div>
+            <input
+              type="number"
+              min="0"
+              step="0.1"
+              value={targetDistance || ''}
+              onChange={(e) =>
+                setTargetDistance(e.target.value ? parseFloat(e.target.value) : undefined)
+              }
+              placeholder="목표 거리를 입력하세요 (선택사항)"
+              className="w-full px-4 py-3 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
 
-          {/* 운동량 */}
+          {/* 목표 시간 */}
           <div>
-            <label className="block text-white text-lg font-semibold mb-4">
-              운동량 *
+            <label className="block text-white text-lg font-semibold mb-2">
+              목표 시간 (분)
             </label>
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <label className="block text-gray-300 text-sm mb-2">세트</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={sets}
-                  onChange={(e) => setSets(parseInt(e.target.value) || 1)}
-                  className="w-full px-4 py-3 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-gray-300 text-sm mb-2">횟수</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={reps}
-                  onChange={(e) => setReps(parseInt(e.target.value) || 1)}
-                  className="w-full px-4 py-3 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-gray-300 text-sm mb-2">쉬는 시간(초)</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="300"
-                  value={restTime}
-                  onChange={(e) => setRestTime(parseInt(e.target.value) || 0)}
-                  className="w-full px-4 py-3 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
+            <input
+              type="number"
+              min="0"
+              value={targetTime || ''}
+              onChange={(e) =>
+                setTargetTime(e.target.value ? parseInt(e.target.value) : undefined)
+              }
+              placeholder="목표 시간을 입력하세요 (선택사항)"
+              className="w-full px-4 py-3 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
 
           {/* 알람 설정 */}
           <div>
-            <label className="flex items-center gap-2 text-white text-lg font-semibold mb-4">
+            <label className="block text-white text-lg font-semibold mb-4">
+              알람 설정
+            </label>
+            <label className="flex items-center text-white mb-4">
               <input
                 type="checkbox"
                 checked={alarmEnabled}
                 onChange={(e) => setAlarmEnabled(e.target.checked)}
-                className="w-5 h-5"
+                className="mr-3 w-5 h-5"
               />
-              <span>알람 설정</span>
+              알람 사용
             </label>
             {alarmEnabled && (
-              <div className="space-y-4 pl-7">
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-4"
+              >
                 <div>
                   <label className="block text-gray-300 text-sm mb-2">알람 시간</label>
                   <input
@@ -252,41 +225,65 @@ const SingleGoalCreatePage = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-gray-300 text-sm mb-2">반복</label>
-                  <div className="flex gap-3 mb-3">
-                    {(['daily', 'weekly', 'custom'] as const).map((type) => (
-                      <button
-                        key={type}
-                        onClick={() => setRepeatType(type)}
-                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
-                          repeatType === type
-                            ? 'bg-blue-500 text-white'
-                            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                        }`}
-                      >
-                        {type === 'daily' ? '매일' : type === 'weekly' ? '매주' : '사용자 정의'}
-                      </button>
-                    ))}
+                  <label className="block text-gray-300 text-sm mb-2">반복 설정</label>
+                  <div className="space-y-2">
+                    <label className="flex items-center text-white">
+                      <input
+                        type="radio"
+                        name="repeatType"
+                        value="daily"
+                        checked={repeatType === 'daily'}
+                        onChange={(e) => setRepeatType(e.target.value as 'daily')}
+                        className="mr-2"
+                      />
+                      매일
+                    </label>
+                    <label className="flex items-center text-white">
+                      <input
+                        type="radio"
+                        name="repeatType"
+                        value="weekly"
+                        checked={repeatType === 'weekly'}
+                        onChange={(e) => setRepeatType(e.target.value as 'weekly')}
+                        className="mr-2"
+                      />
+                      매주
+                    </label>
+                    <label className="flex items-center text-white">
+                      <input
+                        type="radio"
+                        name="repeatType"
+                        value="custom"
+                        checked={repeatType === 'custom'}
+                        onChange={(e) => setRepeatType(e.target.value as 'custom')}
+                        className="mr-2"
+                      />
+                      요일 선택
+                    </label>
                   </div>
                   {repeatType === 'custom' && (
-                    <div className="flex gap-2">
-                      {dayLabels.map((label, index) => (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="mt-4 flex gap-2 flex-wrap"
+                    >
+                      {daysOfWeek.map((day, index) => (
                         <button
                           key={index}
                           onClick={() => handleDayToggle(index)}
-                          className={`w-10 h-10 rounded-lg text-sm font-semibold transition ${
+                          className={`px-4 py-2 rounded-lg transition ${
                             repeatDays.includes(index)
                               ? 'bg-blue-500 text-white'
                               : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                           }`}
                         >
-                          {label}
+                          {day}
                         </button>
                       ))}
-                    </div>
+                    </motion.div>
                   )}
                 </div>
-              </div>
+              </motion.div>
             )}
           </div>
 
@@ -322,7 +319,7 @@ const SingleGoalCreatePage = () => {
           {/* 저장 버튼 */}
           <div className="flex gap-4 pt-4">
             <button
-              onClick={() => navigate('/single')}
+              onClick={() => navigate('/jogging-alone')}
               className="flex-1 px-6 py-3 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition font-semibold"
             >
               취소
@@ -340,5 +337,5 @@ const SingleGoalCreatePage = () => {
   )
 }
 
-export default SingleGoalCreatePage
+export default JoggingGoalCreatePage
 

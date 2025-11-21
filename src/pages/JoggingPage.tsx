@@ -4,17 +4,26 @@ import { motion } from 'framer-motion'
 import { joggingService } from '@/services/joggingService'
 import { JoggingData, JoggingConfig, WeatherInfo } from '@/types'
 
+import CrewChatPanel from '@/components/CrewChatPanel'
+import CrewMeetingView from '@/components/CrewMeetingView'
+
 const JoggingPage = () => {
   const navigate = useNavigate()
   const location = useLocation()
-  const { config, weather } = (location.state as {
+  const { config, weather, crewId } = (location.state as {
     config?: JoggingConfig
     weather?: WeatherInfo[]
+    crewId?: string
   }) || {}
   
   const [isTracking, setIsTracking] = useState(false)
   const [joggingData, setJoggingData] = useState<JoggingData | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [meetingViewHeight, setMeetingViewHeight] = useState(120)
+  const [entryMessage, setEntryMessage] = useState<string | null>(null)
+  const [myVideoEnabled, setMyVideoEnabled] = useState(false)
+  const [myAudioEnabled, setMyAudioEnabled] = useState(false)
 
   useEffect(() => {
     if (isTracking) {
@@ -216,6 +225,44 @@ const JoggingPage = () => {
               )}
             </div>
           </div>
+        )}
+
+        {/* 조깅 함께 모드: 미팅 화면 (하단) */}
+        {config?.mode === 'together' && crewId && (
+          <div className="fixed left-0 right-0 z-30" style={{ bottom: 'env(safe-area-inset-bottom, 0px)' }}>
+            <CrewMeetingView
+              crewId={crewId}
+              myVideoEnabled={myVideoEnabled}
+              myAudioEnabled={myAudioEnabled}
+              onVideoToggle={setMyVideoEnabled}
+              onAudioToggle={setMyAudioEnabled}
+              myStatus={isTracking ? 'active' : 'inactive'}
+              onHeightChange={setMeetingViewHeight}
+              onEntryMessage={setEntryMessage}
+            />
+          </div>
+        )}
+
+        {/* 조깅 함께 모드: 채팅 버튼 (오른쪽 끝) */}
+        {config?.mode === 'together' && crewId && (
+          <>
+            <button
+              onClick={() => setChatOpen(true)}
+              className="fixed right-4 z-50 w-14 h-14 bg-purple-500 rounded-full flex items-center justify-center shadow-lg hover:bg-purple-600 transition"
+              style={{ 
+                bottom: `calc(${meetingViewHeight + 80}px + env(safe-area-inset-bottom, 0px))` 
+              }}
+              title="채팅 열기"
+            >
+              <span className="text-2xl">💬</span>
+            </button>
+            <CrewChatPanel 
+              crewId={crewId} 
+              isOpen={chatOpen} 
+              onClose={() => setChatOpen(false)}
+              entryMessage={entryMessage}
+            />
+          </>
         )}
       </div>
     </div>

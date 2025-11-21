@@ -14,6 +14,8 @@ import JoggingCrewMainPage from './pages/JoggingCrewMainPage'
 import JoggingCrewCreatePage from './pages/JoggingCrewCreatePage'
 import JoggingCrewListPage from './pages/JoggingCrewListPage'
 import JoggingCrewSearchPage from './pages/JoggingCrewSearchPage'
+import JoggingAlonePage from './pages/JoggingAlonePage'
+import JoggingGoalCreatePage from './pages/JoggingGoalCreatePage'
 import SettingsPage from './pages/SettingsPage'
 import CrewMainPage from './pages/CrewMainPage'
 import CrewCreatePage from './pages/CrewCreatePage'
@@ -134,6 +136,14 @@ function App() {
           }
         />
         <Route
+          path="/jogging-crew/edit/:crewId"
+          element={
+            <ProtectedRoute>
+              <JoggingCrewCreatePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/jogging-crew/my-crews"
           element={
             <ProtectedRoute>
@@ -146,6 +156,30 @@ function App() {
           element={
             <ProtectedRoute>
               <JoggingCrewSearchPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/jogging-alone"
+          element={
+            <ProtectedRoute>
+              <JoggingAlonePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/jogging-goal/create"
+          element={
+            <ProtectedRoute>
+              <JoggingGoalCreatePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/jogging-goal/edit/:goalId"
+          element={
+            <ProtectedRoute>
+              <JoggingGoalCreatePage />
             </ProtectedRoute>
           }
         />

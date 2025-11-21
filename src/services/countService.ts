@@ -2,6 +2,7 @@ import { ExerciseType, ExerciseCount, Pose, PoseScore } from '@/types'
 import { ExerciseStrategy } from '@/strategies/ExerciseStrategy'
 import { ExerciseStrategyFactory } from '@/strategies/ExerciseStrategyFactory'
 import { EXERCISE_TYPES } from '@/constants/exerciseTypes'
+import { analyzePose } from '@/utils/poseAnalyzer'
 
 class CountService {
   private counts: ExerciseCount[] = []
@@ -40,7 +41,7 @@ class CountService {
   }
 
   // 자세 분석 및 카운트
-  analyzePose(pose: Pose, videoHeight?: number): { count: number; poseScore: PoseScore; shouldIncrement: boolean; feedback?: string } {
+  analyzePose(pose: Pose, videoHeight?: number): { count: number; poseScore: PoseScore; shouldIncrement: boolean; feedback?: string; angle?: number; depth?: number; state?: string } {
     const poseScore = this.calculatePoseScore(pose)
     this.lastFeedback = '' // 피드백 초기화
     
@@ -93,6 +94,9 @@ class CountService {
           poseScore,
           shouldIncrement: true,
           feedback: this.lastFeedback,
+          angle: result.angle, // 관절 각도
+          depth: result.depth, // 운동 깊이
+          state: result.state, // 운동 상태
         }
       } else {
         // 카운트가 예상과 다르면 무시
@@ -108,32 +112,16 @@ class CountService {
       poseScore,
       shouldIncrement: false,
       feedback: this.lastFeedback,
+      angle: result.angle, // 관절 각도
+      depth: result.depth, // 운동 깊이
+      state: result.state, // 운동 상태
     }
   }
 
   private calculatePoseScore(pose: Pose): PoseScore {
-    // 간단한 자세 점수 계산 로직 (실제로는 더 정교한 알고리즘 필요)
-    const keypoints = pose.keypoints
-    let alignment = 100
-    let range = 100
-    let stability = 100
-    const feedback: string[] = []
-
-    // 기본 점수 계산 (실제 구현 필요)
-    if (keypoints.length < 10) {
-      alignment = 50
-      feedback.push('자세를 더 명확하게 보여주세요')
-    }
-
-    return {
-      overall: Math.round((alignment + range + stability) / 3),
-      details: {
-        alignment,
-        range,
-        stability,
-      },
-      feedback,
-    }
+    // poseAnalyzer의 정교한 점수 계산 로직 사용
+    // 이렇게 하면 운동 타입별로 정확한 점수 계산이 가능하고, 100점까지 받을 수 있습니다
+    return analyzePose(pose, this.exerciseType)
   }
 
   private checkRepetition(pose: Pose): boolean {

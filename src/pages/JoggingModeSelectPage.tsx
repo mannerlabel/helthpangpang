@@ -12,7 +12,7 @@ const JoggingModeSelectPage = () => {
     if (mode === 'together') {
       navigate('/jogging-crew')
     } else {
-      navigate('/jogging-config', { state: { mode } })
+      navigate('/jogging-alone')
     }
   }
 

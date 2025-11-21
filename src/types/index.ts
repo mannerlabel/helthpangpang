@@ -27,6 +27,9 @@ export interface ExerciseCount {
   poseScore: number
   image?: string // base64 이미지 (최고/최저 점수용)
   setNumber: number // 현재 세트 번호
+  angle?: number // 관절 각도 (운동 타입별: 스쿼트-무릎각도, 푸시업-팔꿈치각도, 런지-무릎각도)
+  depth?: number // 운동 깊이 (스쿼트, 런지 등)
+  state?: string // 운동 상태 (standing, down, up 등)
 }
 
 // 앱 모드 타입
@@ -73,6 +76,7 @@ export interface ExerciseSession {
     timestamp: number
   }
   averageScore: number
+  analysis?: AIAnalysis // AI 분석 결과 (피드백 요약)
 }
 
 // 미션 관련 타입
@@ -224,7 +228,20 @@ export interface SingleGoal {
   alarm?: AlarmConfig // 알람 설정
   backgroundMusic?: number // 배경 사운드 ID (1-6)
   createdAt: number // 생성 시간
-  createdBy: string // 생성자 ID (차후 Supabase user_id로 대체)
+  createdBy: string // 생성자 ID (Supabase user_id)
+  isActive: boolean // 활성 상태
+}
+
+// 조깅 혼자 모드 목표 관련 타입
+export interface JoggingGoal {
+  id: string
+  name: string // 목표명
+  targetDistance?: number // 목표 거리 (km)
+  targetTime?: number // 목표 시간 (분)
+  alarm?: AlarmConfig // 알람 설정
+  backgroundMusic?: number // 배경 사운드 ID (1-6)
+  createdAt: number // 생성 시간
+  createdBy: string // 생성자 ID (Supabase user_id)
   isActive: boolean // 활성 상태
 }
 

@@ -1,13 +1,19 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useLocation, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { AlarmConfig } from '@/types'
-import { databaseService } from '@/services/databaseService'
+import { databaseService, JoggingCrew } from '@/services/databaseService'
 import { authService } from '@/services/authService'
 
 const JoggingCrewCreatePage = () => {
   const navigate = useNavigate()
+  const location = useLocation()
+  const params = useParams()
+  const crewId = params.crewId
+  const crewFromState = (location.state as { crew?: JoggingCrew })?.crew
+  const [crew, setCrew] = useState<JoggingCrew | null>(crewFromState || null)
+  const isEditMode = !!crewId || !!crew
 
   const [crewName, setCrewName] = useState('')
   const [maxMembers, setMaxMembers] = useState<number | null>(null)
@@ -21,6 +27,69 @@ const JoggingCrewCreatePage = () => {
   const [alarmTime, setAlarmTime] = useState('09:00')
   const [repeatType, setRepeatType] = useState<'daily' | 'weekly' | 'custom'>('daily')
   const [repeatDays, setRepeatDays] = useState<number[]>([])
+
+  // 수정 모드일 때 기존 데이터 로드
+  useEffect(() => {
+    const loadCrewData = async () => {
+      let targetCrew: JoggingCrew | null = null
+      
+      // location.state에서 crew가 있으면 사용
+      if (crewFromState) {
+        targetCrew = crewFromState
+        if (!crew) {
+          setCrew(crewFromState)
+        }
+      }
+      // URL 파라미터에서 crewId가 있으면 데이터베이스에서 로드
+      else if (crewId && !crew) {
+        try {
+          const user = authService.getCurrentUser()
+          if (!user) return
+          
+          const crews = await databaseService.getJoggingCrewsByUserId(user.id)
+          const foundCrew = crews.find((c: JoggingCrew) => c.id === crewId)
+          
+          if (foundCrew) {
+            targetCrew = foundCrew
+            setCrew(foundCrew)
+          } else {
+            alert('조깅 크루를 찾을 수 없습니다.')
+            navigate('/jogging-crew/my-crews')
+            return
+          }
+        } catch (error) {
+          console.error('조깅 크루 로드 실패:', error)
+          alert('조깅 크루를 불러오는데 실패했습니다.')
+          navigate('/jogging-crew/my-crews')
+          return
+        }
+      }
+      // crew 상태가 이미 있으면 사용
+      else if (crew) {
+        targetCrew = crew
+      }
+      
+      // crew 데이터가 있으면 폼에 설정
+      if (targetCrew) {
+        setCrewName(targetCrew.name)
+        setMaxMembers(targetCrew.maxMembers)
+        setHasMemberLimit(targetCrew.maxMembers !== null)
+        setMemberLimit(targetCrew.maxMembers || 10)
+        setTargetDistance(targetCrew.targetDistance)
+        setTargetTime(targetCrew.targetTime)
+        setAlarmEnabled(!!targetCrew.alarm)
+        if (targetCrew.alarm) {
+          setAlarmTime(targetCrew.alarm.time)
+          setRepeatType(targetCrew.alarm.repeatType)
+          setRepeatDays(targetCrew.alarm.repeatDays || [])
+        }
+        setVideoShareEnabled(targetCrew.videoShareEnabled || false)
+        setAudioShareEnabled(targetCrew.audioShareEnabled || false)
+      }
+    }
+    
+    loadCrewData()
+  }, [crewId, crewFromState, crew, navigate])
 
   const handleSubmit = async () => {
     if (!crewName.trim()) {
@@ -45,21 +114,36 @@ const JoggingCrewCreatePage = () => {
       : undefined
 
     try {
-      await databaseService.createJoggingCrew({
-        name: crewName,
-        maxMembers: hasMemberLimit ? (maxMembers || memberLimit) : null,
-        targetDistance,
-        targetTime,
-        alarm,
-        createdBy: user.id,
-        videoShareEnabled,
-        audioShareEnabled,
-      })
-
-      alert('조깅 크루가 생성되었습니다!')
+      const targetCrewId = crew?.id || crewId
+      if (isEditMode && targetCrewId) {
+        // 수정 모드
+        await databaseService.updateJoggingCrew(targetCrewId, {
+          name: crewName,
+          maxMembers: hasMemberLimit ? (maxMembers || memberLimit) : null,
+          targetDistance,
+          targetTime,
+          alarm,
+          videoShareEnabled,
+          audioShareEnabled,
+        })
+        alert('조깅 크루가 수정되었습니다!')
+      } else {
+        // 생성 모드
+        await databaseService.createJoggingCrew({
+          name: crewName,
+          maxMembers: hasMemberLimit ? (maxMembers || memberLimit) : null,
+          targetDistance,
+          targetTime,
+          alarm,
+          createdBy: user.id,
+          videoShareEnabled,
+          audioShareEnabled,
+        })
+        alert('조깅 크루가 생성되었습니다!')
+      }
       navigate('/jogging-crew/my-crews')
     } catch (error) {
-      alert('조깅 크루 생성에 실패했습니다.')
+      alert(isEditMode ? '조깅 크루 수정에 실패했습니다.' : '조깅 크루 생성에 실패했습니다.')
       console.error(error)
     }
   }
@@ -75,9 +159,9 @@ const JoggingCrewCreatePage = () => {
       <AnimatedBackground />
       <div className="max-w-2xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-4xl font-bold text-white">조깅 크루 생성</h1>
+          <h1 className="text-4xl font-bold text-white">{isEditMode ? '조깅 크루 수정' : '조깅 크루 생성'}</h1>
           <button
-            onClick={() => navigate('/jogging-crew')}
+            onClick={() => navigate('/jogging-crew/my-crews')}
             className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
           >
             뒤로
@@ -255,10 +339,10 @@ const JoggingCrewCreatePage = () => {
             )}
           </div>
 
-          {/* 생성 버튼 */}
+          {/* 생성/수정 버튼 */}
           <div className="flex gap-4 pt-4">
             <button
-              onClick={() => navigate('/jogging-crew')}
+              onClick={() => navigate('/jogging-crew/my-crews')}
               className="flex-1 px-6 py-3 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition font-semibold"
             >
               취소
@@ -267,7 +351,7 @@ const JoggingCrewCreatePage = () => {
               onClick={handleSubmit}
               className="flex-1 px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition font-semibold"
             >
-              크루 생성
+              {isEditMode ? '크루 수정' : '크루 생성'}
             </button>
           </div>
         </div>
