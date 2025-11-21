@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { config } from 'dotenv'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -50,8 +50,33 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       host: '0.0.0.0', // 외부 접근 허용 (ngrok 사용 시 필요)
       open: true,
-      // ngrok 및 외부 접근 허용
+      // HTTPS 설정
+      // 카메라 접근을 위해서는 HTTPS 필수 (브라우저 보안 정책)
+      // 외부 도메인 접속 시 반드시 HTTPS 필요
+      https: (() => {
+        const keyPath = path.resolve(__dirname, 'ssl/vinedev.monster-key.pem')
+        const certPath = path.resolve(__dirname, 'ssl/vinedev.monster-chain.pem')
+        
+        if (existsSync(keyPath) && existsSync(certPath)) {
+          console.log('🔒 HTTPS 서버 실행 중')
+          console.log('   외부 접속: https://vinedev.monster:3000')
+          console.log('   로컬 접속: https://localhost:3000 (인증서 경고 발생 가능)')
+          console.log('   카메라 접근을 위해 HTTPS 필수입니다.')
+          return {
+            key: readFileSync(keyPath),
+            cert: readFileSync(certPath),
+          }
+        }
+        
+        // 인증서 파일이 없으면 HTTP로 실행 (카메라 접근 불가)
+        console.warn('⚠️  인증서 파일이 없어 HTTP로 실행됩니다.')
+        console.warn('   카메라 접근을 위해서는 HTTPS가 필요합니다.')
+        return false
+      })(),
+      // 외부 접근 허용 (도메인 및 ngrok)
       allowedHosts: [
+        'vinedev.monster',
+        '.vinedev.monster',
         '.ngrok.io',
         '.ngrok-free.app',
         '.ngrok.app',

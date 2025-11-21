@@ -875,12 +875,14 @@ const TrainingPage = () => {
     }
 
     // 디버깅: 실제 카운트 확인
-    console.log('운동 종료:', {
-      sessionCounts: session.counts.length,
-      totalCount: totalCount,
-      actualTotalCount: actualTotalCount,
-      counts: session.counts.map(c => ({ count: c.count, set: c.setNumber }))
-    })
+    if (session) {
+      console.log('운동 종료:', {
+        sessionCounts: session.counts.length,
+        totalCount: totalCount,
+        actualTotalCount: actualTotalCount,
+        counts: session.counts.map(c => ({ count: c.count, set: c.setNumber }))
+      })
+    }
 
     // 크루 모드일 때 완료 상태 설정
     if (mode === 'crew') {
@@ -943,7 +945,7 @@ const TrainingPage = () => {
   }, [isCompleted, mode, crewId])
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white relative overflow-hidden">
+    <div className="min-h-screen min-h-[100dvh] bg-gray-900 text-white relative overflow-hidden pb-safe">
       <div className="relative md:flex md:flex-col">
         <video
           ref={cameraVideoRef}
@@ -1073,7 +1075,12 @@ const TrainingPage = () => {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
-                className="absolute bottom-32 left-1/2 transform -translate-x-1/2 bg-black/80 rounded-lg px-6 py-3 z-20"
+                className="absolute left-1/2 transform -translate-x-1/2 bg-black/80 rounded-lg px-6 py-3 z-20"
+                style={{ 
+                  bottom: mode === 'crew' 
+                    ? `calc(${meetingViewHeight + 80}px + env(safe-area-inset-bottom, 0px))`
+                    : 'calc(8rem + env(safe-area-inset-bottom, 0px))'
+                }}
               >
                 <div className="text-white text-lg font-semibold text-center">
                   {currentFeedback}
@@ -1240,11 +1247,11 @@ const TrainingPage = () => {
       </div>
 
       <div 
-        className={`${mode === 'crew' ? 'fixed' : 'absolute'} left-4 right-4 flex gap-4 items-center z-50 md:relative md:bottom-auto md:left-auto md:right-auto md:p-4`}
+        className={`${mode === 'crew' ? 'fixed' : 'absolute'} left-4 right-4 flex gap-4 items-center z-50 md:relative md:bottom-auto md:left-auto md:right-auto md:p-4 mobile-bottom-safe`}
         style={mode === 'crew' ? { 
-          bottom: `${meetingViewHeight + 16}px` // 바텀시트 높이 + 여백
+          bottom: `calc(${meetingViewHeight + 16}px + env(safe-area-inset-bottom, 0px))` // 바텀시트 높이 + 여백 + safe area
         } : {
-          bottom: '1rem'
+          bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))'
         }}
       >
         <button
@@ -1303,7 +1310,7 @@ const TrainingPage = () => {
 
       {/* 크루 모드: 미팅 화면 (하단) */}
       {mode === 'crew' && crewId && (
-        <div className="fixed bottom-0 left-0 right-0 z-30">
+        <div className="fixed left-0 right-0 z-30" style={{ bottom: 'env(safe-area-inset-bottom, 0px)' }}>
           <CrewMeetingView
             crewId={crewId}
             myVideoEnabled={myVideoEnabled}
@@ -1324,7 +1331,10 @@ const TrainingPage = () => {
         <>
           <button
             onClick={() => setChatOpen(true)}
-            className="fixed right-4 bottom-24 z-50 w-14 h-14 bg-purple-500 rounded-full flex items-center justify-center shadow-lg hover:bg-purple-600 transition"
+            className="fixed right-4 z-50 w-14 h-14 bg-purple-500 rounded-full flex items-center justify-center shadow-lg hover:bg-purple-600 transition"
+            style={{ 
+              bottom: `calc(${meetingViewHeight + 80}px + env(safe-area-inset-bottom, 0px))` 
+            }}
             title="채팅 열기"
           >
             <span className="text-2xl">💬</span>

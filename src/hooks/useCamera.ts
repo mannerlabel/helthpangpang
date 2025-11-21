@@ -27,7 +27,8 @@ export const useCamera = (config: CameraConfig) => {
           (video as any).srcObject = stream
         } else {
           // 구형 브라우저 지원
-          video.src = URL.createObjectURL(stream as any)
+          const videoElement = video as HTMLVideoElement & { src?: string }
+          videoElement.src = URL.createObjectURL(stream as any)
         }
       }
       

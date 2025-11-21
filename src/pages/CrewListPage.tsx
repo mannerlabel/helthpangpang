@@ -39,7 +39,7 @@ const CrewListPage = () => {
       console.log('사용자 ID:', user.id)
       const crews = await databaseService.getCrewsByUserId(user.id)
       console.log('로드된 내 크루:', crews)
-      setMyCrews(crews)
+      setMyCrews(crews as Crew[])
     } catch (error: any) {
       console.error('크루 목록 로드 실패:', error)
       console.error('에러 상세:', error?.message, error?.code, error?.details, error?.hint)

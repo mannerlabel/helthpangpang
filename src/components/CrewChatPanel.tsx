@@ -340,7 +340,7 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage }: CrewChatPanelP
             </div>
 
             {/* 입력 영역 */}
-            <form onSubmit={handleSendMessage} className="bg-white/90 backdrop-blur-sm p-3 border-t border-gray-200">
+            <form onSubmit={handleSendMessage} className="bg-white/90 backdrop-blur-sm p-3 border-t border-gray-200 mobile-bottom-safe" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 0.75rem)' }}>
               <div className="flex gap-2 items-end">
                 <input
                   type="text"

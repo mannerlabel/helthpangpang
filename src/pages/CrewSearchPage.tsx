@@ -209,7 +209,7 @@ const CrewSearchPage = () => {
         }
       })
 
-      setFilteredCrews(crews)
+      setFilteredCrews(crews as Crew[])
       console.log('최종 필터링된 크루:', crews.length)
     } catch (error: any) {
       console.error('크루 목록 로드 실패:', error)

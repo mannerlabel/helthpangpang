@@ -1,6 +1,4 @@
-import { useRef } from 'react'
 import { useCamera } from '@/hooks/useCamera'
-import { CameraConfig } from '@/types/camera'
 
 interface CameraViewProps {
   width?: number

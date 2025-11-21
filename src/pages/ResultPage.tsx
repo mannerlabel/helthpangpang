@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ExerciseSession, AIAnalysis } from '@/types'
-import { EXERCISE_TYPES, EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { aiAnalysisService } from '@/services/aiAnalysisService'
 import { databaseService } from '@/services/databaseService'
 import { authService } from '@/services/authService'
@@ -39,8 +38,13 @@ const ResultPage = () => {
         const dbSession = {
           userId: user.id,
           crewId: (session as any).crewId,
-          mode: session.mode,
-          config: session.config,
+          mode: session.mode === 'jogging' ? 'single' : session.mode as 'single' | 'crew',
+          config: {
+            type: session.config.type,
+            sets: session.config.sets,
+            reps: session.config.reps,
+            restTime: session.config.restTime || 10,
+          },
           startTime: session.startTime || Date.now(),
           endTime: session.endTime,
           counts: session.counts.map((count: any) => ({
@@ -95,11 +99,6 @@ const ResultPage = () => {
   }, [session, navigate])
 
   if (!session) return null
-
-  const exerciseName =
-    session.config.type === EXERCISE_TYPES.CUSTOM
-      ? session.config.customName || '커스텀 운동'
-      : (EXERCISE_TYPE_NAMES[session.config.type as keyof typeof EXERCISE_TYPE_NAMES] || '운동')
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 p-8">

@@ -396,7 +396,7 @@ const ModeSelectionPage = () => {
       </div>
       
       {/* 버전 표시 */}
-      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 text-sm text-gray-400">
+      <div className="absolute left-1/2 transform -translate-x-1/2 text-sm text-gray-400 mobile-bottom-4">
         v{getVersion()}
       </div>
     </div>

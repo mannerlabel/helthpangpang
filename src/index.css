@@ -28,13 +28,18 @@ html, body {
   position: fixed;
   width: 100%;
   height: 100%;
+  /* 모바일 브라우저 주소창 대응 */
+  height: 100dvh; /* 동적 뷰포트 높이 */
 }
 
 #root {
   width: 100%;
   height: 100%;
+  height: 100dvh; /* 동적 뷰포트 높이 */
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  /* Safe area 지원 */
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 :root {
@@ -63,5 +68,32 @@ body {
 #root {
   width: 100%;
   min-height: 100vh;
+  min-height: 100dvh; /* 동적 뷰포트 높이 */
+}
+
+/* 모바일 하단 고정 요소를 위한 유틸리티 클래스 */
+.mobile-bottom-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: max(env(safe-area-inset-bottom), 1rem);
+}
+
+.mobile-bottom-offset {
+  bottom: env(safe-area-inset-bottom);
+  bottom: max(env(safe-area-inset-bottom), 0.5rem);
+}
+
+/* 모바일 하단 여백을 고려한 bottom 위치 */
+.mobile-bottom-4 {
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+
+.mobile-bottom-8 {
+  bottom: calc(2rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* 모바일 뷰포트 높이 지원 */
+.mobile-min-h-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 

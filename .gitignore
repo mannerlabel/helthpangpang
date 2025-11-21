@@ -33,6 +33,9 @@ dist-ssr
 DELETE_*.sql
 SUPABASE_*.sql
 
+# SSL certificates (sensitive data)
+ssl/
+
 # Build outputs
 build
 *.tsbuildinfo

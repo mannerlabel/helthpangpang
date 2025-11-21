@@ -61,7 +61,12 @@ const CrewCreatePage = () => {
         name: crewName,
         maxMembers: hasMemberLimit ? (maxMembers || memberLimit) : null,
         exerciseType,
-        exerciseConfig: config,
+        exerciseConfig: {
+          type: config.type,
+          sets: config.sets,
+          reps: config.reps,
+          restTime: config.restTime || 10,
+        },
         alarm,
         createdBy: user.id,
         videoShareEnabled,

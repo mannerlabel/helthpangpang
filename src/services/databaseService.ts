@@ -4,6 +4,7 @@
  */
 
 import { supabase } from './supabaseClient'
+import { authService } from './authService'
 
 // Supabase 사용 여부 확인
 const USE_SUPABASE = !!(import.meta as any).env?.VITE_SUPABASE_URL && !!(import.meta as any).env?.VITE_SUPABASE_ANON_KEY && supabase !== null

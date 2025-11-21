@@ -46,7 +46,7 @@ class AudioService {
       // 모든 효과음 볼륨 업데이트
       this.sounds.forEach((sound) => {
         try {
-          sound.volume(config.volume)
+          sound.volume(config.volume ?? 1.0)
         } catch (e) {
           console.warn('효과음 볼륨 업데이트 중 오류:', e)
         }

@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
-import { motion, AnimatePresence, useMotionValue } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { databaseService, CrewMember, User } from '@/services/databaseService'
 import { authService } from '@/services/authService'
 
@@ -49,9 +49,9 @@ const CrewMeetingView = ({
   const myVideoRef = useRef<HTMLVideoElement>(null)
   const participantVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map())
   const [height, setHeight] = useState(120) // 현재 높이 (px)
-  const y = useMotionValue(0)
+  const [isExpanded, setIsExpanded] = useState(false) // 펼쳐진 상태 여부
   
-  // 드래그 제한: 최소 높이와 최대 높이
+  // 높이 제한: 최소 높이와 최대 높이
   const COLLAPSED_HEIGHT = 120 // 접힌 상태 높이 (핸들바 + 제목)
   const MAX_HEIGHT = window.innerHeight * 0.7 // 최대 높이 (화면의 70%)
 
@@ -141,8 +141,9 @@ const CrewMeetingView = ({
       }
 
       // Supabase에서 실제 활성 사용자 확인
-      // localStorage의 active_training_sessions만으로는 다른 브라우저/PC의 사용자를 감지할 수 없음
-      // Supabase의 crew_members 업데이트를 통해 실제 활성 사용자 확인
+      // video_enabled가 true인 사용자는 모두 활성으로 간주
+      // (TrainingPage에서 5초마다 video_enabled를 true로 업데이트하므로, 
+      //  true면 현재 TrainingPage에 있는 것으로 간주)
       try {
         const { supabase } = await import('@/services/supabaseClient')
         if (supabase) {
@@ -159,89 +160,14 @@ const CrewMeetingView = ({
           if (allMembers) {
             console.log('Supabase에서 조회한 멤버:', allMembers)
             
-            // 각 멤버의 UUID를 localStorage ID로 매핑
+            // video_enabled가 true인 사용자는 모두 활성으로 간주
             for (const member of allMembers) {
-              // video_enabled가 true인 경우, 실제로 TrainingPage에 있는지 확인
-              // localStorage의 active_training_sessions를 확인하여 실제 입장 여부 확인
-              let isActuallyActive = false
-              
               if (member.video_enabled === true) {
-                // video_enabled가 true인 경우, localStorage에서 실제 세션 확인
-                // 실제로 TrainingPage에 있는 사용자만 활성으로 간주
-                try {
-                  const activeSessions = localStorage.getItem('active_training_sessions')
-                  if (activeSessions) {
-                    const sessions = JSON.parse(activeSessions)
-                    // 해당 크루의 모든 활성 세션 확인
-                    const crewActiveSessions = sessions.filter(
-                      (s: { userId: string; crewId: string }) => s.crewId === crewId
-                    )
-                    
-                    if (crewActiveSessions.length > 0) {
-                      // 활성 세션이 있으면, 해당 사용자의 UUID 확인
-                      try {
-                        const { data: supabaseUser } = await supabase
-                          .from('users')
-                          .select('email')
-                          .eq('id', member.user_id)
-                          .single()
-                        
-                        if (supabaseUser) {
-                          // localStorage에서 email로 사용자 찾기
-                          const localStorageKeys = Object.keys(localStorage)
-                          for (const key of localStorageKeys) {
-                            if (key.startsWith('user_')) {
-                              try {
-                                const userData = JSON.parse(localStorage.getItem(key) || '{}')
-                                if (userData.email === supabaseUser.email) {
-                                  const localStorageId = key.replace('user_', '')
-                                  // localStorage의 활성 세션과 일치하는지 확인
-                                  const matchingSession = crewActiveSessions.find(
-                                    (s: { userId: string }) => s.userId === localStorageId
-                                  )
-                                  if (matchingSession) {
-                                    isActuallyActive = true
-                                    console.log('✅ 실제 입장 확인 (localStorage 세션 일치):', member.user_id, '->', localStorageId)
-                                    break
-                                  }
-                                }
-                              } catch (e) {
-                                // 무시
-                              }
-                            }
-                          }
-                        }
-                      } catch (e) {
-                        console.error('사용자 매핑 실패:', e)
-                      }
-                    }
-                  }
-                  
-                  // localStorage에 활성 세션이 없으면 video_enabled는 true지만 실제로는 입장하지 않은 것으로 간주
-                  // (다른 브라우저/PC의 사용자는 localStorage로 확인할 수 없으므로)
-                  if (!isActuallyActive) {
-                    console.log('⚠️ video_enabled는 true지만 localStorage 세션 없음 (실제 입장 안함):', member.user_id)
-                  }
-                } catch (e) {
-                  console.error('localStorage 세션 확인 실패:', e)
-                  // localStorage 확인 실패 시 video_enabled만 확인하지 않음 (정확성 향상)
-                  isActuallyActive = false
-                }
-              }
-              
-              console.log('멤버 활성 상태 확인:', {
-                userId: member.user_id,
-                videoEnabled: member.video_enabled,
-                audioEnabled: member.audio_enabled,
-                isActuallyActive: isActuallyActive,
-              })
-              
-              if (isActuallyActive) {
-                // UUID를 그대로 activeUserIds에 추가 (중요!)
+                // UUID를 그대로 activeUserIds에 추가
                 activeUserIds.add(member.user_id)
-                console.log('✅ 활성 UUID 추가 (실제 입장 확인):', member.user_id)
+                console.log('✅ 활성 사용자 추가 (video_enabled=true):', member.user_id)
                 
-                // localStorage에서 해당 UUID를 가진 사용자 찾기 (email 기반)
+                // localStorage ID도 추가하기 위해 email로 매핑
                 try {
                   const { data: supabaseUser, error: userError } = await supabase
                     .from('users')
@@ -261,10 +187,11 @@ const CrewMeetingView = ({
                         try {
                           const userData = JSON.parse(localStorage.getItem(key) || '{}')
                           if (userData.email === supabaseUser.email) {
-                            // localStorage ID도 추가
+                            // localStorage ID도 추가 (현재 브라우저/탭의 사용자 확인용)
                             const localStorageId = key.replace('user_', '')
                             activeUserIds.add(localStorageId)
                             console.log('✅ UUID->localStorage 매핑:', member.user_id, '->', localStorageId)
+                            break
                           }
                         } catch (e) {
                           // 무시
@@ -276,7 +203,7 @@ const CrewMeetingView = ({
                   console.error('사용자 매핑 실패:', e)
                 }
               } else {
-                console.log('❌ 비활성 멤버 (video_enabled는 true지만 실제 입장 안함):', member.user_id, 'video_enabled:', member.video_enabled)
+                console.log('❌ 비활성 멤버 (video_enabled=false):', member.user_id)
               }
             }
           } else {
@@ -512,27 +439,15 @@ const CrewMeetingView = ({
     return 'bg-blue-500'
   }
 
-  const handleDrag = (event: any, info: any) => {
-    // 위로 드래그하면 높이 증가, 아래로 드래그하면 높이 감소
-    const newHeight = Math.max(
-      COLLAPSED_HEIGHT,
-      Math.min(MAX_HEIGHT, height - info.delta.y)
-    )
+  const handleToggle = () => {
+    // 클릭 시 접기/펼치기 토글
+    const newIsExpanded = !isExpanded
+    setIsExpanded(newIsExpanded)
+    const newHeight = newIsExpanded ? MAX_HEIGHT : COLLAPSED_HEIGHT
     setHeight(newHeight)
     if (onHeightChange) {
       onHeightChange(newHeight)
     }
-  }
-
-  const handleDragEnd = () => {
-    // 드래그 종료 시 스냅: 중간 지점 기준으로 접기/펼치기
-    const threshold = (COLLAPSED_HEIGHT + MAX_HEIGHT) / 2
-    const newHeight = height > threshold ? MAX_HEIGHT : COLLAPSED_HEIGHT
-    setHeight(newHeight)
-    if (onHeightChange) {
-      onHeightChange(newHeight)
-    }
-    y.set(0) // 드래그 위치 리셋
   }
 
   // 높이 변경 시 콜백 호출
@@ -561,25 +476,32 @@ const CrewMeetingView = ({
 
   return (
     <motion.div
-      className="bg-gray-900/95 rounded-t-2xl overflow-hidden fixed bottom-0 left-0 right-0 z-30"
+      className="bg-gray-900/95 rounded-t-2xl overflow-hidden fixed left-0 right-0 z-30"
       style={{ 
         height: `${height}px`,
+        bottom: 'env(safe-area-inset-bottom, 0px)',
+        paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 0px)',
       }}
       initial={{ height: COLLAPSED_HEIGHT }}
       animate={{ height }}
       transition={{ type: 'spring', damping: 25, stiffness: 200 }}
     >
       {/* 핸들바 */}
-      <motion.div 
-        className="flex justify-center pt-2 pb-1 cursor-grab active:cursor-grabbing"
-        drag="y"
-        onDrag={handleDrag}
-        onDragEnd={handleDragEnd}
-        dragConstraints={{ top: 0, bottom: 0 }}
-        dragElastic={0}
+      <div 
+        className="flex justify-center pt-2 pb-1 cursor-pointer hover:opacity-80 transition-opacity"
+        onClick={handleToggle}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            handleToggle()
+          }
+        }}
+        aria-label={isExpanded ? '접기' : '펼치기'}
       >
         <div className="w-12 h-1.5 bg-gray-600 rounded-full" />
-      </motion.div>
+      </div>
 
       <div className="p-4 h-full flex flex-col">
         <div className="flex items-center justify-between mb-4 flex-shrink-0">
