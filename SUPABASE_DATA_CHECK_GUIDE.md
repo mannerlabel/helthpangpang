@@ -11,7 +11,7 @@
 2. **프로젝트 선택**
    - 대시보드에서 해당 프로젝트 클릭
    - 프로젝트 이름은 `.env` 파일의 `VITE_SUPABASE_URL`에서 확인 가능
-     - 예: `https://irmaleosbdhykjacaegw.supabase.co` → 프로젝트 ID는 `irmaleosbdhykjacaegw`
+     - 예: `https://your-project-id.supabase.co` → 프로젝트 ID는 `your-project-id`
 
 3. **SQL Editor 열기**
    - 왼쪽 사이드바에서 "SQL Editor" 클릭

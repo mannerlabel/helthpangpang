@@ -5,9 +5,13 @@
 프로젝트 루트에 `.env` 파일을 생성하고 다음 내용을 추가하세요:
 
 ```
-VITE_SUPABASE_URL=https://irmaleosbdhykjacaegw.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlybWFsZW9zYmRoeWtqYWNhZWd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM1ODk1NjcsImV4cCI6MjA3OTE2NTU2N30.O2K9Imz7Q77Q7bugaOQBm4Esmg9Af3YEVZayJDmPzZs
+VITE_SUPABASE_URL=your_supabase_project_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
+
+**참고:** 
+- `your_supabase_project_url`: Supabase 대시보드 → Settings → API → Project URL
+- `your_supabase_anon_key`: Supabase 대시보드 → Settings → API → Project API keys → `anon` `public` 키
 
 ## 2. Supabase 테이블 생성
 

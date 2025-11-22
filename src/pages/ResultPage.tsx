@@ -210,17 +210,82 @@ const ResultPage = () => {
     }
 
     // 세션을 localStorage에도 저장 (로컬 백업)
-    const savedSessions = JSON.parse(localStorage.getItem('exerciseSessions') || '[]')
-    // 중복 저장 방지 (같은 ID가 있으면 업데이트)
-    const existingIndex = savedSessions.findIndex((s: ExerciseSession) => s.id === session.id)
-    if (existingIndex !== -1) {
-      savedSessions[existingIndex] = session
-    } else {
-      savedSessions.push(session)
+    // 이미지 데이터는 제거하고 메타데이터만 저장하여 용량 절약
+    try {
+      const savedSessions = JSON.parse(localStorage.getItem('exerciseSessions') || '[]')
+      
+      // 이미지 데이터를 제거한 경량 세션 생성
+      const lightweightSession = {
+        ...session,
+        counts: session.counts.map((count: any) => ({
+          ...count,
+          image: undefined, // 이미지 데이터 제거
+        })),
+        bestScore: session.bestScore ? {
+          ...session.bestScore,
+          image: undefined, // 이미지 데이터 제거
+        } : undefined,
+        worstScore: session.worstScore ? {
+          ...session.worstScore,
+          image: undefined, // 이미지 데이터 제거
+        } : undefined,
+      }
+      
+      // 중복 저장 방지 (같은 ID가 있으면 업데이트)
+      const existingIndex = savedSessions.findIndex((s: ExerciseSession) => s.id === session.id)
+      if (existingIndex !== -1) {
+        savedSessions[existingIndex] = lightweightSession
+      } else {
+        savedSessions.push(lightweightSession)
+      }
+      
+      // 최근 20개만 유지 (용량 절약)
+      const recentSessions = savedSessions.slice(-20)
+      
+      // 저장 시도
+      const dataToStore = JSON.stringify(recentSessions)
+      
+      // 데이터 크기 확인 (약 5MB 제한)
+      const sizeInMB = new Blob([dataToStore]).size / (1024 * 1024)
+      if (sizeInMB > 4) {
+        // 데이터가 너무 크면 더 적은 수만 유지
+        const reducedSessions = savedSessions.slice(-10)
+        localStorage.setItem('exerciseSessions', JSON.stringify(reducedSessions))
+        console.warn('⚠️ localStorage 용량 초과 위험: 최근 10개만 저장했습니다.')
+      } else {
+        localStorage.setItem('exerciseSessions', dataToStore)
+      }
+    } catch (error) {
+      // localStorage 저장 실패 시에도 앱은 계속 작동
+      console.error('⚠️ localStorage 저장 실패 (로컬 백업 건너뜀):', error)
+      // 에러가 QuotaExceededError인 경우 기존 데이터 정리 시도
+      if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+        try {
+          // 기존 데이터를 더 줄여서 저장 시도
+          const savedSessions = JSON.parse(localStorage.getItem('exerciseSessions') || '[]')
+          const minimalSessions = savedSessions.slice(-5).map((s: any) => ({
+            id: s.id,
+            startTime: s.startTime,
+            endTime: s.endTime,
+            averageScore: s.averageScore,
+            config: s.config,
+            counts: [], // 카운트 데이터 제거
+            bestScore: s.bestScore ? { score: s.bestScore.score } : undefined,
+            worstScore: s.worstScore ? { score: s.worstScore.score } : undefined,
+          }))
+          localStorage.setItem('exerciseSessions', JSON.stringify(minimalSessions))
+          console.warn('⚠️ localStorage 용량 부족: 최소 데이터만 저장했습니다.')
+        } catch (retryError) {
+          // 재시도도 실패하면 localStorage 비우기
+          console.error('⚠️ localStorage 저장 불가: 기존 데이터를 정리합니다.')
+          try {
+            localStorage.removeItem('exerciseSessions')
+          } catch (clearError) {
+            console.error('⚠️ localStorage 정리 실패:', clearError)
+          }
+        }
+      }
     }
-    // 최근 100개만 유지
-    const recentSessions = savedSessions.slice(-100)
-    localStorage.setItem('exerciseSessions', JSON.stringify(recentSessions))
 
     // AI 분석 후 세션 저장
     const fetchAnalysis = async () => {

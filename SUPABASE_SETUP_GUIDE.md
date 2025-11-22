@@ -3,12 +3,12 @@
 ## 1단계: Supabase 대시보드 접속
 
 1. 브라우저에서 https://supabase.com 접속
-2. 로그인 후 프로젝트 선택: **HealthPangPang** (또는 https://irmaleosbdhykjacaegw.supabase.co)
+2. 로그인 후 프로젝트 선택: **프로젝트 이름** (또는 `.env` 파일의 `VITE_SUPABASE_URL`에서 확인)
 
 ## 2단계: SQL Editor 열기
 
 1. 왼쪽 사이드바에서 **SQL Editor** 클릭
-   - 또는 직접 URL: https://supabase.com/dashboard/project/irmaleosbdhykjacaegw/sql/new
+   - 또는 Supabase 대시보드에서 직접 SQL Editor 메뉴 선택
 
 ## 3단계: SQL 실행 순서
 
