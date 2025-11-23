@@ -19,6 +19,7 @@ import DebugInfo from '@/components/DebugInfo'
 import VolumeControl from '@/components/VolumeControl'
 import CrewMeetingView from '@/components/CrewMeetingView'
 import CrewChatPanel from '@/components/CrewChatPanel'
+import NavigationButtons from '@/components/NavigationButtons'
 import { AppMode, ExerciseConfig, ExerciseSession, ExerciseCount, Effect, AlarmConfig, ExerciseType } from '@/types'
 import { EXERCISE_TYPE_NAMES, EXERCISE_TYPES } from '@/constants/exerciseTypes'
 import { getVersion } from '@/utils/version'
@@ -81,6 +82,32 @@ const TrainingPage = () => {
   const [meetingViewHeight, setMeetingViewHeight] = useState(120) // 바텀시트 높이
   const [isCompleted, setIsCompleted] = useState(false)
   const [entryMessage, setEntryMessage] = useState<string | null>(null) // 입장 메시지 (데이터베이스에 저장하지 않음)
+  const [hasNewMessage, setHasNewMessage] = useState(false) // 새 메시지 알림 상태
+  const [hasEntryNotification, setHasEntryNotification] = useState(false) // 입장 알림 상태
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0) // 미확인 메시지 수
+  const [hasRecommended, setHasRecommended] = useState(false) // 추천 상태
+  const [recommendations, setRecommendations] = useState(0) // 추천수
+  const [hasCancelled, setHasCancelled] = useState(false) // 추천 취소 상태
+  const [recommendToast, setRecommendToast] = useState<{ message: string; type: 'success' | 'cancel' } | null>(null) // 추천 토스트 메시지
+
+  // hasNewMessage 상태 변경 추적
+  useEffect(() => {
+    console.log('💬 TrainingPage: hasNewMessage 상태 변경:', hasNewMessage)
+  }, [hasNewMessage])
+
+  // entryMessage가 변경되면 입장 알림 활성화
+  useEffect(() => {
+    if (entryMessage && !chatOpen) {
+      setHasEntryNotification(true)
+      // 5초 후 자동으로 알림 해제
+      const timer = setTimeout(() => {
+        setHasEntryNotification(false)
+      }, 5000)
+      return () => clearTimeout(timer)
+    } else {
+      setHasEntryNotification(false)
+    }
+  }, [entryMessage, chatOpen])
 
   // 크루 모드: 활성 세션 등록/해제 (localStorage + Supabase)
   useEffect(() => {
@@ -225,6 +252,31 @@ const TrainingPage = () => {
         
         cleanup()
       }
+    }
+  }, [mode, crewId])
+
+  // 크루 정보 및 추천 상태 로드
+  useEffect(() => {
+    if (mode === 'crew' && crewId) {
+      const loadCrewInfo = async () => {
+        const user = authService.getCurrentUser()
+        if (!user) return
+
+        try {
+          const crew = await databaseService.getCrewById(crewId)
+          if (crew) {
+            setRecommendations(crew.recommendations || 0)
+          }
+
+          const hasRec = await databaseService.hasUserRecommendedCrew(crewId, user.id)
+          const hasCancel = await databaseService.hasUserCancelledCrewRecommendation(crewId, user.id)
+          setHasRecommended(hasRec)
+          setHasCancelled(hasCancel)
+        } catch (error) {
+          console.error('크루 정보 로드 실패:', error)
+        }
+      }
+      loadCrewInfo()
     }
   }, [mode, crewId])
 
@@ -955,6 +1007,61 @@ const TrainingPage = () => {
     }
   }, [isCompleted, mode, crewId])
 
+  // 추천 버튼 클릭 핸들러
+  const handleRecommend = async () => {
+    if (!crewId) return
+    const user = authService.getCurrentUser()
+    if (!user) {
+      alert('로그인이 필요합니다.')
+      return
+    }
+
+    try {
+      const result = await databaseService.toggleCrewRecommendation(crewId, user.id)
+      if (result.success) {
+        setHasRecommended(result.isRecommended)
+        setRecommendations(result.recommendations)
+        // 추천 취소 시에만 hasCancelled를 true로 설정
+        if (!result.isRecommended) {
+          setHasCancelled(true)
+          // 추천 취소 메시지 표시
+          setRecommendToast({ message: '추천이 취소되었습니다', type: 'cancel' })
+        } else {
+          // 다시 추천하면 취소 상태 해제
+          setHasCancelled(false)
+          // 추천 성공 메시지 표시
+          setRecommendToast({ message: '추천되었습니다', type: 'success' })
+        }
+        // 2초 후 토스트 메시지 자동 제거
+        setTimeout(() => {
+          setRecommendToast(null)
+        }, 2000)
+      } else {
+        alert('추천 처리에 실패했습니다.')
+      }
+    } catch (error: any) {
+      console.error('추천 처리 중 오류:', error)
+      console.error('에러 상세:', {
+        code: error?.code,
+        message: error?.message,
+        details: error?.details,
+        hint: error?.hint
+      })
+      
+      // RLS 정책 관련 에러
+      if (error?.code === '42501' || error?.message?.includes('permission denied') || error?.message?.includes('권한')) {
+        alert('추천 기능을 사용하려면 Supabase에서 DATABASE_SETUP.sql 파일을 실행하여 RLS 정책을 설정해주세요.')
+      } else if (error?.code === 'PGRST205' || error?.code === '42P01' || error?.message?.includes('table') || error?.message?.includes('테이블')) {
+        alert('추천 취소 기능을 사용하려면 Supabase에서 DATABASE_SETUP.sql 파일을 실행하여 테이블을 생성해주세요.')
+      } else if (error?.code === '23505' || error?.message?.includes('unique constraint')) {
+        alert('이미 추천한 크루입니다.')
+      } else {
+        const errorMessage = error?.message || error?.details || String(error)
+        alert(`추천 처리 중 오류가 발생했습니다: ${errorMessage}\n\n에러 코드: ${error?.code || 'N/A'}`)
+      }
+    }
+  }
+
   return (
     <div className="min-h-screen min-h-[100dvh] bg-gray-900 text-white relative overflow-hidden pb-safe">
       <div className="relative md:flex md:flex-col">
@@ -1249,73 +1356,153 @@ const TrainingPage = () => {
       {/* 볼륨 컨트롤 - 나가기 버튼 위에 배치 */}
       {(isStarted || isResting) && (
         <div 
-          className={`${mode === 'crew' ? 'fixed' : 'absolute'} left-4 right-4 z-40 md:relative md:bottom-auto md:left-auto md:right-auto md:p-4`}
+          className={`${mode === 'crew' ? 'fixed' : 'absolute'} left-2 right-2 md:left-4 md:right-4 z-40 md:relative md:bottom-auto md:left-auto md:right-auto md:p-4`}
           style={mode === 'crew' ? { 
             bottom: `calc(${meetingViewHeight + 80}px + env(safe-area-inset-bottom, 0px))` // 나가기 버튼 위에 배치
           } : {
             bottom: 'calc(5rem + env(safe-area-inset-bottom, 0px))' // 나가기 버튼 위에 배치
           }}
         >
-          <div className="bg-gray-700/50 rounded-lg p-3">
-            <div className="flex items-center justify-center">
-              <VolumeControl 
-                onExercisePause={setIsExercisePaused}
-                isExercisePaused={isExercisePaused}
-              />
+          <div className="bg-gray-700/50 rounded-lg p-2 md:p-3">
+            <div className="flex items-center justify-center gap-1.5 md:gap-3 flex-wrap">
+              <div className="flex-shrink-0">
+                <VolumeControl 
+                  onExercisePause={setIsExercisePaused}
+                  isExercisePaused={isExercisePaused}
+                />
+              </div>
+              {/* 크루 모드: 추천 버튼 (볼륨 컨트롤 오른쪽) */}
+              {mode === 'crew' && crewId && (
+                <button
+                  onClick={handleRecommend}
+                  className={`w-9 h-9 md:w-10 md:h-10 rounded-full flex items-center justify-center shadow-lg transition flex-shrink-0 ${
+                    hasRecommended
+                      ? 'bg-yellow-600 hover:bg-yellow-700'
+                      : 'bg-yellow-500 hover:bg-yellow-600'
+                  }`}
+                  title={hasRecommended ? '추천 취소' : '추천하기'}
+                >
+                  <span className="text-base md:text-lg relative">
+                    ⭐
+                    {recommendations > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-3.5 h-3.5 md:w-4 md:h-4 flex items-center justify-center font-bold text-[9px] md:text-[10px]">
+                        {recommendations > 9 ? '9+' : recommendations}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              )}
+              {/* 크루 모드: 채팅 버튼 (볼륨 컨트롤 오른쪽) */}
+              {mode === 'crew' && crewId && (
+                <motion.button
+                  onClick={() => {
+                    console.log('💬 TrainingPage: 채팅 버튼 클릭', { hasNewMessage, hasEntryNotification })
+                    setChatOpen(true)
+                    setHasNewMessage(false) // 채팅창 열면 알림 해제
+                    setHasEntryNotification(false) // 입장 알림도 해제
+                    console.log('💬 TrainingPage: 알림 상태를 false로 설정')
+                  }}
+                  className="w-9 h-9 md:w-10 md:h-10 rounded-full flex items-center justify-center shadow-lg transition flex-shrink-0"
+                  style={{ 
+                    backgroundColor: (hasNewMessage || hasEntryNotification || unreadMessageCount > 0) ? '#fbbf24' : '#a855f7' // 새 메시지, 입장 알림, 또는 미확인 메시지 있으면 노란색
+                  }}
+                  title={`채팅 열기${unreadMessageCount > 0 ? ` (${unreadMessageCount}개 미확인)` : ''}`}
+                  animate={(hasNewMessage || hasEntryNotification || unreadMessageCount > 0) ? {
+                    x: [0, -3, 3, -3, 3, 0],
+                    scale: [1, 1.03, 1, 1.03, 1],
+                  } : {}}
+                  transition={{
+                    duration: 0.5,
+                    repeat: (hasNewMessage || hasEntryNotification || unreadMessageCount > 0) ? Infinity : 0,
+                    repeatDelay: 1,
+                  }}
+                  onAnimationStart={() => {
+                    if (hasNewMessage || hasEntryNotification || unreadMessageCount > 0) {
+                      console.log('💬 TrainingPage: 채팅 아이콘 애니메이션 시작 (흔들림)')
+                    }
+                  }}
+                >
+                  <motion.span 
+                    className="text-base md:text-lg relative"
+                    animate={(hasNewMessage || hasEntryNotification || unreadMessageCount > 0) ? {
+                      opacity: [1, 0.5, 1, 0.5, 1],
+                    } : {}}
+                    transition={{
+                      duration: 0.5,
+                      repeat: (hasNewMessage || hasEntryNotification || unreadMessageCount > 0) ? Infinity : 0,
+                      repeatDelay: 1,
+                    }}
+                  >
+                    💬
+                    {unreadMessageCount > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-3.5 h-3.5 md:w-4 md:h-4 flex items-center justify-center font-bold text-[9px] md:text-[10px]">
+                        {unreadMessageCount > 9 ? '9+' : unreadMessageCount}
+                      </span>
+                    )}
+                  </motion.span>
+                </motion.button>
+              )}
             </div>
           </div>
         </div>
       )}
 
       <div 
-        className={`${mode === 'crew' ? 'fixed' : 'absolute'} left-4 right-4 flex gap-4 items-center z-50 md:relative md:bottom-auto md:left-auto md:right-auto md:p-4 mobile-bottom-safe`}
+        className={`${mode === 'crew' ? 'fixed' : 'absolute'} left-2 right-2 md:left-4 md:right-4 flex gap-2 md:gap-4 items-center z-50 md:relative md:bottom-auto md:left-auto md:right-auto md:p-4 mobile-bottom-safe flex-wrap`}
         style={mode === 'crew' ? { 
           bottom: `calc(${meetingViewHeight + 16}px + env(safe-area-inset-bottom, 0px))` // 바텀시트 높이 + 여백 + safe area
         } : {
           bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))'
         }}
       >
-        <button
-          onClick={() => {
-            // 나가기 시 모든 오디오 즉시 정지 (동기적으로)
-            audioService.stopAll()
-            // 추가 안전장치: 강제로 모든 Howl 인스턴스 정지
-            if (typeof window !== 'undefined' && (window as any).Howl) {
-              // Howl의 모든 재생 중인 사운드 강제 정지
-              try {
-                const howlInstances = (window as any).Howl._howls || []
-                howlInstances.forEach((howl: any) => {
-                  if (howl && typeof howl.stop === 'function') {
-                    howl.stop()
-                    if (typeof howl.unload === 'function') {
-                      howl.unload()
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <NavigationButtons 
+            exitMode={true}
+            exitTitle="나가기"
+            onBack={() => {
+              // 나가기 시 모든 오디오 즉시 정지 (동기적으로)
+              audioService.stopAll()
+              // 추가 안전장치: 강제로 모든 Howl 인스턴스 정지
+              if (typeof window !== 'undefined' && (window as any).Howl) {
+                // Howl의 모든 재생 중인 사운드 강제 정지
+                try {
+                  const howlInstances = (window as any).Howl._howls || []
+                  howlInstances.forEach((howl: any) => {
+                    if (howl && typeof howl.stop === 'function') {
+                      howl.stop()
+                      if (typeof howl.unload === 'function') {
+                        howl.unload()
+                      }
                     }
-                  }
-                })
-              } catch (e) {
-                console.warn('Howl 인스턴스 정지 중 오류:', e)
+                  })
+                } catch (e) {
+                  console.warn('Howl 인스턴스 정지 중 오류:', e)
+                }
               }
-            }
-            // 즉시 페이지 이동
-            navigate('/mode-select')
-          }}
-          className="px-6 py-3 bg-gray-700 rounded-lg hover:bg-gray-600 z-50"
-        >
-          나가기
-        </button>
-        {/* 운동 중 강제 종료 버튼 (항상 표시) */}
-        {isStarted && (
-          <button
-            onClick={() => {
-              if (window.confirm('운동을 종료하시겠습니까?')) {
-                handleFinish()
+              // 모드에 따라 이전 화면으로 이동
+              if (mode === 'single') {
+                navigate('/single')
+              } else if (mode === 'crew') {
+                navigate('/crew/my-crews')
+              } else {
+                navigate('/mode-select')
               }
             }}
-            className="px-6 py-3 bg-red-500 rounded-lg hover:bg-red-600 font-bold"
-          >
-            강제 종료
-          </button>
-        )}
+          />
+          {/* 운동 중 강제 종료 버튼 (항상 표시) */}
+          {isStarted && (
+            <button
+              onClick={() => {
+                if (window.confirm('운동을 종료하시겠습니까?')) {
+                  handleFinish()
+                }
+              }}
+              className="px-3 py-2 md:px-6 md:py-3 bg-red-500 rounded-lg hover:bg-red-600 font-bold text-sm md:text-base whitespace-nowrap"
+            >
+              강제 종료
+            </button>
+          )}
+        </div>
         {/* 데스크톱 환경 볼륨 컨트롤 */}
         <div className="hidden md:flex items-center gap-2">
           <VolumeControl 
@@ -1324,7 +1511,7 @@ const TrainingPage = () => {
           />
         </div>
         {/* 버전 표시 */}
-        <div className="ml-auto text-sm text-gray-400">
+        <div className="ml-auto text-xs md:text-sm text-gray-400 flex-shrink-0">
           v{getVersion()}
         </div>
       </div>
@@ -1347,26 +1534,51 @@ const TrainingPage = () => {
         </div>
       )}
 
-      {/* 크루 모드: 채팅 버튼 (오른쪽 끝) */}
+      {/* 크루 모드: 채팅 패널 */}
       {mode === 'crew' && crewId && (
-        <>
-          <button
-            onClick={() => setChatOpen(true)}
-            className="fixed right-4 z-50 w-14 h-14 bg-purple-500 rounded-full flex items-center justify-center shadow-lg hover:bg-purple-600 transition"
-            style={{ 
-              bottom: `calc(${meetingViewHeight + 80}px + env(safe-area-inset-bottom, 0px))` 
-            }}
-            title="채팅 열기"
-          >
-            <span className="text-2xl">💬</span>
-          </button>
           <CrewChatPanel 
             crewId={crewId} 
             isOpen={chatOpen} 
-            onClose={() => setChatOpen(false)}
+          onClose={() => {
+            console.log('💬 TrainingPage: 채팅창 닫기')
+            setChatOpen(false)
+          }}
             entryMessage={entryMessage}
-          />
-        </>
+          onNewMessage={() => {
+            console.log('💬 TrainingPage: onNewMessage 콜백 호출됨!', { chatOpen })
+            if (!chatOpen) {
+              console.log('💬 TrainingPage: hasNewMessage를 true로 설정')
+              setHasNewMessage(true)
+            } else {
+              console.log('💬 TrainingPage: 채팅창이 열려있어서 알림 설정 안함')
+            }
+          }}
+          onUnreadCountChange={(count) => {
+            console.log('💬 TrainingPage: 미확인 메시지 수 변경:', count)
+            setUnreadMessageCount(count)
+          }}
+        />
+      )}
+
+      {/* 추천 토스트 메시지 */}
+      {recommendToast && (
+        <motion.div
+          initial={{ opacity: 0, y: 50, scale: 0.9 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 50, scale: 0.9 }}
+          className="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-[100]"
+        >
+          <div className={`px-6 py-3 rounded-lg shadow-lg flex items-center gap-2 ${
+            recommendToast.type === 'success' 
+              ? 'bg-green-500 text-white' 
+              : 'bg-orange-500 text-white'
+          }`}>
+            <span className="text-xl">
+              {recommendToast.type === 'success' ? '✅' : '⚠️'}
+            </span>
+            <span className="font-semibold">{recommendToast.message}</span>
+          </div>
+        </motion.div>
       )}
     </div>
   )

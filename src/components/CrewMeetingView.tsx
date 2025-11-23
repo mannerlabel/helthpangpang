@@ -111,6 +111,8 @@ const CrewMeetingView = ({
   const previousActiveUserIdsRef = useRef<Set<string>>(new Set())
   // 입장 메시지 전송 추적 (중복 방지)
   const sentEntryMessagesRef = useRef<Set<string>>(new Set())
+  // 퇴장 메시지 전송 추적 (중복 방지)
+  const sentExitMessagesRef = useRef<Set<string>>(new Set())
 
   const loadParticipants = async () => {
     try {
@@ -265,10 +267,37 @@ const CrewMeetingView = ({
         }
       }
       
-      // 나간 사용자 먼저 처리 (sentEntryMessagesRef에서 제거)
+      // 나간 사용자 먼저 처리 (sentEntryMessagesRef에서 제거 및 퇴장 메시지 전송)
       for (const leftUserId of leftUserUuids) {
         sentEntryMessagesRef.current.delete(leftUserId)
         console.log('나간 사용자 제거:', leftUserId)
+        
+        // 퇴장 메시지 처리 (한 번만 전송)
+        if (!sentExitMessagesRef.current.has(leftUserId) && leftUserId !== currentUserUuid) {
+          try {
+            const leftUser = await databaseService.getUserById(leftUserId)
+            if (leftUser) {
+              // 전송 전에 sentExitMessagesRef에 먼저 추가 (동시 실행 방지)
+              sentExitMessagesRef.current.add(leftUserId)
+              
+              // 데이터베이스에 저장하지 않고 콜백으로 전달
+              const exitMessage = `${leftUser.name}님이 퇴장하셨습니다`
+              if (onEntryMessage) {
+                onEntryMessage(exitMessage)
+              }
+              console.log('✅ 퇴장 메시지 표시 완료 (DB 저장 안함):', leftUser.name, 'userId:', leftUserId)
+            }
+          } catch (error) {
+            console.error('퇴장 메시지 처리 실패:', error)
+            // 실패한 경우 sentExitMessagesRef에서 제거 (재시도 가능)
+            sentExitMessagesRef.current.delete(leftUserId)
+          }
+        }
+      }
+      
+      // 다시 입장한 사용자는 퇴장 메시지 추적에서 제거 (재입장 가능하도록)
+      for (const newUserId of newActiveUuids) {
+        sentExitMessagesRef.current.delete(newUserId)
       }
       
       // 새로 입장한 사용자 확인 및 입장 메시지 전송

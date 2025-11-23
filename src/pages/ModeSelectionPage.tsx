@@ -5,6 +5,7 @@ import { AppMode, ExerciseSession, ExerciseType, AIAnalysis } from '@/types'
 import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { getVersion } from '@/utils/version'
 import AnimatedBackground from '@/components/AnimatedBackground'
+import NavigationButtons from '@/components/NavigationButtons'
 import { aiAnalysisService } from '@/services/aiAnalysisService'
 import { authService } from '@/services/authService'
 import { databaseService } from '@/services/databaseService'
@@ -361,26 +362,30 @@ const ModeSelectionPage = () => {
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-5xl font-bold text-white">헬스팡팡</h1>
           
-          {/* 데스크톱 메뉴 */}
-          <div className="hidden md:flex gap-3 items-center">
-            <span className="text-white text-sm">
-              {authService.getCurrentUser()?.name || '사용자'}님
-            </span>
-            <button
-              onClick={() => navigate('/settings')}
-              className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
-            >
-              설정
-            </button>
-            <button
-              onClick={() => {
-                authService.logout()
-                navigate('/login')
-              }}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
-            >
-              로그아웃
-            </button>
+          <div className="flex items-center gap-3">
+            {/* 데스크톱 메뉴 */}
+            <div className="hidden md:flex gap-3 items-center">
+              <span className="text-white text-sm">
+                {authService.getCurrentUser()?.name || '사용자'}님
+              </span>
+              <button
+                onClick={() => navigate('/settings')}
+                className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
+              >
+                설정
+              </button>
+              <button
+                onClick={() => {
+                  authService.logout()
+                  navigate('/login')
+                }}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+              >
+                로그아웃
+              </button>
+            </div>
+            
+            <NavigationButtons backPath="/home" showHome={true} />
           </div>
 
           {/* 모바일 햄버거 메뉴 */}

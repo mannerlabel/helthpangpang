@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
+import NavigationButtons from '@/components/NavigationButtons'
 import { SingleGoal, ExerciseType } from '@/types'
 import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { databaseService } from '@/services/databaseService'
@@ -155,12 +156,7 @@ const SingleModePage = () => {
       <div className="max-w-4xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-4xl font-bold text-white">싱글 모드</h1>
-          <button
-            onClick={() => navigate('/mode-select')}
-            className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
-          >
-            뒤로
-          </button>
+          <NavigationButtons backPath="/mode-select" />
         </div>
 
         {/* 목표 생성 버튼 */}

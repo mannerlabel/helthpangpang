@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { JoggingMode } from '@/types'
+import NavigationButtons from '@/components/NavigationButtons'
 
 const JoggingModeSelectPage = () => {
   const navigate = useNavigate()
@@ -38,12 +39,7 @@ const JoggingModeSelectPage = () => {
       <div className="max-w-4xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-5xl font-bold text-white">조깅 모드 선택</h1>
-          <button
-            onClick={() => navigate('/mode-select')}
-            className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
-          >
-            뒤로가기
-          </button>
+          <NavigationButtons backPath="/mode-select" />
         </div>
         <p className="text-xl text-gray-300 text-center mb-12">조깅 모드를 선택하세요</p>
 

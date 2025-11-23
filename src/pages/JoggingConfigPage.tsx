@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { JoggingMode, JoggingConfig, AlarmConfig, JoggingTogetherConfig, WeatherInfo } from '@/types'
+import NavigationButtons from '@/components/NavigationButtons'
 
 const JoggingConfigPage = () => {
   const navigate = useNavigate()
@@ -103,12 +104,7 @@ const JoggingConfigPage = () => {
       <div className="max-w-4xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-4xl font-bold text-white">조깅 설정</h1>
-          <button
-            onClick={() => navigate('/jogging-mode-select')}
-            className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
-          >
-            뒤로가기
-          </button>
+          <NavigationButtons backPath="/jogging-mode-select" />
         </div>
 
         <div className="space-y-6">

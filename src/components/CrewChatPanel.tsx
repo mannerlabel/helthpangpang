@@ -13,6 +13,8 @@ interface CrewChatPanelProps {
   isOpen: boolean
   onClose: () => void
   entryMessage?: string | null // 입장 메시지 (데이터베이스에 저장하지 않음)
+  onNewMessage?: () => void // 새 메시지 알림 콜백
+  onUnreadCountChange?: (count: number) => void // 미확인 메시지 수 변경 콜백
 }
 
 interface WeatherData {
@@ -24,7 +26,7 @@ interface WeatherData {
   condition: string
 }
 
-const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage }: CrewChatPanelProps) => {
+const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, onUnreadCountChange }: CrewChatPanelProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [entryMessages, setEntryMessages] = useState<ChatMessage[]>([]) // 입장 메시지 (로컬만)
   const [newMessage, setNewMessage] = useState('')
@@ -32,6 +34,19 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage }: CrewChatPanelP
   const [weather, setWeather] = useState<WeatherData | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const previousEntryMessageRef = useRef<string | null>(null)
+  const previousMessagesCountRef = useRef<number>(0)
+  const previousMessageIdsRef = useRef<Set<string>>(new Set()) // 이전 메시지 ID 추적
+  const currentUserIdRef = useRef<string | null>(null)
+  const lastReadMessageIdRef = useRef<string | null>(null) // 마지막으로 읽은 메시지 ID
+
+  useEffect(() => {
+    // 현재 사용자 ID 저장
+    const user = authService.getCurrentUser()
+    if (user) {
+      currentUserIdRef.current = user.id
+      console.log('💬 CrewChatPanel: 현재 사용자 ID 저장:', user.id, user.name)
+    }
+  }, [])
 
   useEffect(() => {
     if (isOpen) {
@@ -44,6 +59,142 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage }: CrewChatPanelP
       return () => clearInterval(interval)
     }
   }, [isOpen, crewId])
+
+  // 새 메시지 감지 및 알림
+  useEffect(() => {
+    console.log('💬 새 메시지 감지 체크:', {
+      isOpen,
+      messagesCount: messages.length,
+      previousCount: previousMessagesCountRef.current,
+      previousIds: Array.from(previousMessageIdsRef.current),
+      lastReadMessageId: lastReadMessageIdRef.current,
+    })
+
+    const user = authService.getCurrentUser()
+    if (!user) {
+      console.log('💬 사용자 정보 없음, 알림 건너뜀')
+      return
+    }
+
+    // 현재 메시지 ID 집합 생성
+    const currentMessageIds = new Set(messages.map(m => m.id))
+    
+    // 새 메시지 찾기 (이전에 없던 메시지)
+    const newMessages = messages.filter(msg => 
+      !previousMessageIdsRef.current.has(msg.id) && 
+      msg.userId !== user.id && 
+      msg.userId !== 'system' &&
+      msg.type !== 'system'
+    )
+
+    // 미확인 메시지 찾기 (마지막으로 읽은 메시지 이후의 메시지)
+    let unreadMessages: ChatMessage[] = []
+    if (lastReadMessageIdRef.current) {
+      const lastReadIndex = messages.findIndex(m => m.id === lastReadMessageIdRef.current)
+      if (lastReadIndex >= 0) {
+        unreadMessages = messages.slice(lastReadIndex + 1).filter(msg => 
+          msg.userId !== user.id && 
+          msg.userId !== 'system' &&
+          msg.type !== 'system'
+        )
+      } else {
+        // 마지막 읽은 메시지를 찾을 수 없으면 모든 메시지를 미확인으로 처리
+        unreadMessages = messages.filter(msg => 
+          msg.userId !== user.id && 
+          msg.userId !== 'system' &&
+          msg.type !== 'system'
+        )
+      }
+    } else if (messages.length > 0 && !isOpen) {
+      // 처음 열 때는 모든 메시지를 읽은 것으로 처리하지 않고, 채팅창이 닫혀있으면 미확인으로 처리
+      unreadMessages = messages.filter(msg => 
+        msg.userId !== user.id && 
+        msg.userId !== 'system' &&
+        msg.type !== 'system'
+      )
+    }
+
+    console.log('💬 새 메시지 감지 결과:', {
+      newMessagesCount: newMessages.length,
+      unreadMessagesCount: unreadMessages.length,
+      lastReadMessageId: lastReadMessageIdRef.current,
+    })
+
+    // 미확인 메시지 수 변경 알림
+    if (onUnreadCountChange) {
+      onUnreadCountChange(unreadMessages.length)
+      console.log('💬 미확인 메시지 수 전달:', unreadMessages.length)
+    }
+
+    // 채팅창이 닫혀있을 때 새 메시지 알림
+    if (!isOpen && newMessages.length > 0) {
+      // 가장 최신 메시지 확인 (메시지는 오름차순 정렬이므로 마지막이 최신)
+      const latestNewMessage = newMessages[newMessages.length - 1]
+      console.log('💬 최신 새 메시지:', {
+        id: latestNewMessage.id,
+        userName: latestNewMessage.userName,
+        message: latestNewMessage.message,
+        userId: latestNewMessage.userId,
+      })
+
+      if (onNewMessage) {
+        console.log('💬 onNewMessage 콜백 호출!')
+        onNewMessage()
+      } else {
+        console.log('💬 onNewMessage 콜백이 없음')
+      }
+    }
+
+    // 이전 메시지 정보 업데이트
+    previousMessagesCountRef.current = messages.length
+    previousMessageIdsRef.current = new Set(messages.map(m => m.id))
+    
+    console.log('💬 메시지 상태 업데이트:', {
+      count: messages.length,
+      ids: Array.from(previousMessageIdsRef.current),
+    })
+  }, [messages, isOpen, onNewMessage, onUnreadCountChange])
+
+  // 채팅창이 열릴 때 마지막 메시지를 읽은 것으로 표시
+  useEffect(() => {
+    if (isOpen && messages.length > 0) {
+      const lastMessage = messages[messages.length - 1]
+      lastReadMessageIdRef.current = lastMessage.id
+      console.log('💬 채팅창 열림 - 마지막 메시지를 읽은 것으로 표시:', lastMessage.id)
+      // 미확인 메시지 수 초기화
+      if (onUnreadCountChange) {
+        onUnreadCountChange(0)
+        console.log('💬 미확인 메시지 수 초기화: 0')
+      }
+    } else if (!isOpen && messages.length > 0) {
+      // 채팅창이 닫힐 때는 마지막 읽은 메시지 ID를 유지 (초기화하지 않음)
+      console.log('💬 채팅창 닫힘 - 마지막 읽은 메시지 ID 유지:', lastReadMessageIdRef.current)
+    }
+  }, [isOpen, messages.length, onUnreadCountChange])
+
+  // 채팅창이 열려있을 때 새 메시지가 오면 자동으로 읽은 것으로 표시 (스크롤이 맨 아래에 있을 때)
+  useEffect(() => {
+    if (isOpen && messages.length > 0) {
+      // 스크롤이 맨 아래에 있는지 확인
+      const messagesContainer = messagesEndRef.current?.parentElement
+      if (messagesContainer) {
+        const isScrolledToBottom = 
+          messagesContainer.scrollHeight - messagesContainer.scrollTop <= messagesContainer.clientHeight + 100 // 100px 여유
+        
+        if (isScrolledToBottom) {
+          // 스크롤이 맨 아래에 있으면 마지막 메시지를 읽은 것으로 표시
+          const lastMessage = messages[messages.length - 1]
+          if (lastReadMessageIdRef.current !== lastMessage.id) {
+            lastReadMessageIdRef.current = lastMessage.id
+            console.log('💬 스크롤이 맨 아래 - 마지막 메시지를 읽은 것으로 표시:', lastMessage.id)
+            if (onUnreadCountChange) {
+              onUnreadCountChange(0)
+            }
+          }
+        }
+      }
+    }
+  }, [messages, isOpen, onUnreadCountChange])
 
   useEffect(() => {
     // 메시지가 추가되면 스크롤
@@ -83,9 +234,18 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage }: CrewChatPanelP
   const loadMessages = async () => {
     try {
       const chatMessages = await databaseService.getChatMessages(crewId, 50)
+      console.log('💬 메시지 로드 완료:', {
+        count: chatMessages.length,
+        latestMessage: chatMessages.length > 0 ? {
+          id: chatMessages[chatMessages.length - 1].id,
+          userName: chatMessages[chatMessages.length - 1].userName,
+          message: chatMessages[chatMessages.length - 1].message.substring(0, 30),
+          timestamp: new Date(chatMessages[chatMessages.length - 1].timestamp).toLocaleString(),
+        } : null,
+      })
       setMessages(chatMessages)
     } catch (error) {
-      console.error('메시지 로드 실패:', error)
+      console.error('💬 메시지 로드 실패:', error)
     }
   }
 

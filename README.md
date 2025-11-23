@@ -95,6 +95,7 @@ src/
 
 - Node.js 18+ 
 - npm 또는 yarn
+- Supabase 계정 (데이터베이스용)
 
 ### 설치
 
@@ -109,6 +110,10 @@ npm install
 `C:/env/.env` 파일을 생성하고 다음 내용을 추가하세요:
 
 ```env
+# Supabase 설정 (필수)
+VITE_SUPABASE_URL=your_supabase_project_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+
 # AI 분석 API URL (선택사항 - 커스텀 API 사용 시)
 VITE_AI_API_URL=http://localhost:8000/api
 
@@ -123,10 +128,23 @@ VITE_OPENAI_API_KEY=sk-proj-your-api-key-here
 **중요**: 
 - 환경 변수 파일은 **`C:/env/.env`** 경로에 위치해야 합니다.
 - 모든 환경 변수는 `VITE_` 접두사를 사용해야 합니다.
+- Supabase URL과 anon key는 필수입니다. (`DATABASE_SETUP.sql` 실행 후)
 - `VITE_OPENAI_API_KEY`를 설정하면 OpenAI API를 직접 사용하여 운동 분석을 수행합니다.
 - API 키는 절대 공개 저장소에 커밋하지 마세요.
 - `vite.config.ts`에서 빌드 타임에 `C:/env/.env` 파일을 자동으로 로드합니다.
 - 파일이 없으면 프로젝트 루트의 `.env` 파일을 사용합니다.
+
+### 데이터베이스 설정
+
+1. **Supabase 프로젝트 생성**
+   - [Supabase](https://supabase.com)에서 새 프로젝트 생성
+   - 프로젝트 URL과 anon key 확인
+
+2. **데이터베이스 스키마 설정**
+   - `DATABASE_SETUP.sql` 파일을 Supabase SQL Editor에서 실행
+   - 모든 테이블, 인덱스, RLS 정책이 자동으로 생성됩니다
+
+3. **자세한 설정 가이드는 `PROJECT_DOCUMENTATION.md` 참조**
 
 ### 개발 서버 실행
 
@@ -174,6 +192,12 @@ MediaPipe Hands를 사용하여 손가락 위치를 감지하고, 시작 버튼 
 
 ### AI 분석
 운동 종료 후 최고/최저 점수 이미지와 평균 점수를 AI API에 전달하여 상세한 분석과 피드백을 받습니다.
+
+## 문서
+
+- **README.md**: 프로젝트 개요 및 빠른 시작 가이드
+- **PROJECT_DOCUMENTATION.md**: 상세한 기능 가이드 및 문제 해결
+- **DATABASE_SETUP.sql**: 데이터베이스 전체 설정 스크립트
 
 ## 라이선스
 

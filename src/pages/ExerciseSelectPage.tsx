@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { AppMode, ExerciseType, ExerciseConfig, AlarmConfig } from '@/types'
 import { EXERCISE_TYPES, EXERCISE_TYPE_DETAILS } from '@/constants/exerciseTypes'
 import AnimatedBackground from '@/components/AnimatedBackground'
+import NavigationButtons from '@/components/NavigationButtons'
 
 const ExerciseSelectPage = () => {
   const navigate = useNavigate()
@@ -71,11 +72,14 @@ const ExerciseSelectPage = () => {
     <div className="min-h-screen p-8 overflow-hidden relative">
       <AnimatedBackground />
       <div className="max-w-4xl mx-auto relative z-10">
-        <h1 className="text-4xl font-bold text-white mb-8 text-center">
-          {mode === 'single' && '싱글 모드'}
-          {mode === 'crew' && '크루 모드'}
-          {mode === 'jogging' && '조깅 모드'}
-        </h1>
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-4xl font-bold text-white">
+            {mode === 'single' && '싱글 모드'}
+            {mode === 'crew' && '크루 모드'}
+            {mode === 'jogging' && '조깅 모드'}
+          </h1>
+          <NavigationButtons backPath="/mode-select" />
+        </div>
 
         {/* 종목 선택 */}
         <div className="bg-gray-800 rounded-2xl p-6 mb-6">
@@ -272,15 +276,9 @@ const ExerciseSelectPage = () => {
         {/* 시작 버튼 */}
         <div className="flex gap-4">
           <button
-            onClick={() => navigate('/')}
-            className="flex-1 px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition"
-          >
-            뒤로가기
-          </button>
-          <button
             onClick={handleStart}
             disabled={selectedExercise === EXERCISE_TYPES.CUSTOM && !customName}
-            className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition disabled:opacity-50 disabled:cursor-not-allowed font-semibold"
           >
             운동 시작
           </button>

@@ -4,6 +4,9 @@ class JoggingService {
   private watchId: number | null = null
   private currentData: JoggingData | null = null
   private route: Array<{ lat: number; lng: number; timestamp: number }> = []
+  private isPaused: boolean = false
+  private pauseStartTime: number | null = null
+  private totalPauseTime: number = 0 // 총 일시정지 시간 (ms)
 
   async startTracking(): Promise<JoggingData> {
     if (!navigator.geolocation) {
@@ -33,7 +36,7 @@ class JoggingService {
           // 위치 추적 시작
           this.watchId = navigator.geolocation.watchPosition(
             (pos) => {
-              if (this.currentData) {
+              if (this.currentData && !this.isPaused) {
                 const newPoint = {
                   lat: pos.coords.latitude,
                   lng: pos.coords.longitude,
@@ -53,11 +56,11 @@ class JoggingService {
                 this.route.push(newPoint)
                 this.currentData.route = [...this.route]
 
-                // 평균 속도 계산
-                const elapsedTime = (Date.now() - startTime) / 1000 / 3600 // 시간
+                // 평균 속도 계산 (일시정지 시간 제외)
+                const activeTime = (Date.now() - startTime - this.totalPauseTime) / 1000 / 3600 // 시간
                 this.currentData.averageSpeed =
-                  this.currentData.distance / elapsedTime || 0
-                this.currentData.averageTime = Date.now() - startTime
+                  this.currentData.distance / activeTime || 0
+                this.currentData.averageTime = Date.now() - startTime - this.totalPauseTime
               }
             },
             (error) => {
@@ -85,15 +88,44 @@ class JoggingService {
       this.watchId = null
     }
 
+    // 일시정지 중이면 일시정지 해제
+    if (this.isPaused && this.pauseStartTime) {
+      this.totalPauseTime += Date.now() - this.pauseStartTime
+      this.isPaused = false
+      this.pauseStartTime = null
+    }
+
     if (this.currentData) {
       this.currentData.endTime = Date.now()
       const data = { ...this.currentData }
       this.currentData = null
       this.route = []
+      this.totalPauseTime = 0
+      this.isPaused = false
+      this.pauseStartTime = null
       return data
     }
 
     return null
+  }
+
+  pauseTracking(): void {
+    if (this.currentData && !this.isPaused) {
+      this.isPaused = true
+      this.pauseStartTime = Date.now()
+    }
+  }
+
+  resumeTracking(): void {
+    if (this.currentData && this.isPaused && this.pauseStartTime) {
+      this.totalPauseTime += Date.now() - this.pauseStartTime
+      this.isPaused = false
+      this.pauseStartTime = null
+    }
+  }
+
+  getIsPaused(): boolean {
+    return this.isPaused
   }
 
   getCurrentData(): JoggingData | null {

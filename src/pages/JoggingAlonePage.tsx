@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
-import { JoggingGoal } from '@/types'
+import NavigationButtons from '@/components/NavigationButtons'
+import { JoggingGoal, JoggingConfig, WeatherInfo } from '@/types'
 import { databaseService } from '@/services/databaseService'
 import { authService } from '@/services/authService'
 
@@ -66,11 +67,50 @@ const JoggingAlonePage = () => {
     }
   }
 
-  const handleStart = (goal: JoggingGoal) => {
-    navigate('/jogging-config', {
+  const handleStart = async (goal: JoggingGoal) => {
+    // 날씨 정보 가져오기 (모킹 데이터)
+    const mockWeather: WeatherInfo[] = [
+      {
+        date: '오늘',
+        temperature: 22,
+        humidity: 65,
+        uvIndex: 5,
+        condition: '맑음',
+        pm10: 45,
+        pm25: 25,
+      },
+      {
+        date: '내일',
+        temperature: 24,
+        humidity: 70,
+        uvIndex: 6,
+        condition: '구름조금',
+        pm10: 50,
+        pm25: 28,
+      },
+      {
+        date: '모레',
+        temperature: 20,
+        humidity: 60,
+        uvIndex: 4,
+        condition: '맑음',
+        pm10: 40,
+        pm25: 22,
+      },
+    ]
+
+    const config: JoggingConfig = {
+      mode: 'alone',
+      targetDistance: goal.targetDistance,
+      targetTime: goal.targetTime,
+      alarm: goal.alarm,
+    }
+
+    // 조깅 페이지로 바로 이동
+    navigate('/jogging', {
       state: {
-        mode: 'alone',
-        goal: goal,
+        config,
+        weather: mockWeather,
       },
     })
   }
@@ -100,13 +140,8 @@ const JoggingAlonePage = () => {
       <AnimatedBackground />
       <div className="max-w-4xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-4xl font-bold text-white">조깅 혼자 모드</h1>
-          <button
-            onClick={() => navigate('/jogging-mode-select')}
-            className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
-          >
-            뒤로
-          </button>
+          <h1 className="text-4xl font-bold text-white">나의 조깅목표</h1>
+          <NavigationButtons backPath="/jogging-mode-select" />
         </div>
 
         {/* 목표 생성 버튼 */}

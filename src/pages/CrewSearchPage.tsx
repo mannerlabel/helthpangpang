@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
+import NavigationButtons from '@/components/NavigationButtons'
 import { Crew, ExerciseType } from '@/types'
 import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { databaseService } from '@/services/databaseService'
@@ -167,6 +168,9 @@ const CrewSearchPage = () => {
   const [filteredCrews, setFilteredCrews] = useState<Crew[]>([])
   const [sortBy, setSortBy] = useState<'created' | 'recommendations'>('recommendations')
   const [loading, setLoading] = useState(true)
+  const [hasRecommendedMap, setHasRecommendedMap] = useState<Record<string, boolean>>({})
+  const [hasCancelledMap, setHasCancelledMap] = useState<Record<string, boolean>>({})
+  const [creatorMap, setCreatorMap] = useState<Record<string, string>>({})
 
   useEffect(() => {
     loadCrews()
@@ -186,6 +190,30 @@ const CrewSearchPage = () => {
         const myCrewIds = new Set(myCrews.map((c) => c.id))
         crews = crews.filter((crew) => !myCrewIds.has(crew.id))
         console.log('참여한 크루 제외 후:', crews.length)
+
+        // 각 크루에 대해 추천 여부 확인 및 생성자 정보 가져오기
+        const recommendedMap: Record<string, boolean> = {}
+        const cancelledMap: Record<string, boolean> = {}
+        const creatorNameMap: Record<string, string> = {}
+        for (const crew of crews) {
+          const hasRecommended = await databaseService.hasUserRecommendedCrew(crew.id, user.id)
+          const hasCancelled = await databaseService.hasUserCancelledCrewRecommendation(crew.id, user.id)
+          recommendedMap[crew.id] = hasRecommended
+          cancelledMap[crew.id] = hasCancelled
+          
+          // 생성자 정보 가져오기
+          try {
+            const creator = await databaseService.getUserById(crew.createdBy)
+            if (creator) {
+              creatorNameMap[crew.id] = creator.name
+            }
+          } catch (error) {
+            console.error(`크루 ${crew.id}의 생성자 정보 가져오기 실패:`, error)
+          }
+        }
+        setHasRecommendedMap(recommendedMap)
+        setHasCancelledMap(cancelledMap)
+        setCreatorMap(creatorNameMap)
       }
 
       // 검색 필터링
@@ -264,6 +292,52 @@ const CrewSearchPage = () => {
     }
   }
 
+  const handleRecommend = async (crew: Crew) => {
+    const user = authService.getCurrentUser()
+    if (!user) {
+      alert('로그인이 필요합니다.')
+      navigate('/login')
+      return
+    }
+
+    try {
+      const result = await databaseService.toggleCrewRecommendation(crew.id, user.id)
+      if (result.success) {
+        setHasRecommendedMap(prev => ({ ...prev, [crew.id]: result.isRecommended }))
+        if (!result.isRecommended) {
+          setHasCancelledMap(prev => ({ ...prev, [crew.id]: true }))
+        }
+        await loadCrews()
+      } else {
+        if (hasCancelledMap[crew.id]) {
+          alert('이미 취소한 크루는 다시 추천할 수 없습니다.')
+        } else {
+          alert('추천 처리에 실패했습니다.')
+        }
+      }
+    } catch (error: any) {
+      console.error('추천 처리 중 오류:', error)
+      console.error('에러 상세:', {
+        code: error?.code,
+        message: error?.message,
+        details: error?.details,
+        hint: error?.hint
+      })
+      
+      // RLS 정책 관련 에러
+      if (error?.code === '42501' || error?.message?.includes('permission denied') || error?.message?.includes('권한') || error?.message?.includes('RLS')) {
+        alert('추천 기능을 사용하려면 Supabase에서 FIX_RLS_POLICIES.sql 파일을 실행하여 RLS 정책을 설정해주세요.')
+      } else if (error?.code === 'PGRST205' || error?.code === '42P01' || error?.message?.includes('table') || error?.message?.includes('테이블')) {
+        alert('추천 기능을 사용하려면 Supabase에서 ADD_RECOMMENDATIONS_FEATURE.sql 파일을 실행하여 테이블을 생성해주세요.')
+      } else if (error?.code === '23505' || error?.message?.includes('unique constraint')) {
+        alert('이미 추천한 크루입니다.')
+      } else {
+        const errorMessage = error?.message || error?.details || String(error)
+        alert(`추천 처리 중 오류가 발생했습니다: ${errorMessage}\n\n에러 코드: ${error?.code || 'N/A'}`)
+      }
+    }
+  }
+
   const formatDate = (timestamp: number): string => {
     const date = new Date(timestamp)
     return date.toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' })
@@ -275,12 +349,7 @@ const CrewSearchPage = () => {
       <div className="max-w-4xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-4xl font-bold text-white">크루 검색</h1>
-          <button
-            onClick={() => navigate('/crew')}
-            className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
-          >
-            뒤로
-          </button>
+          <NavigationButtons backPath="/crew" />
         </div>
 
         {/* 검색 바 및 정렬 */}
@@ -354,6 +423,10 @@ const CrewSearchPage = () => {
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm mb-2">
                       <div>
+                        <span className="text-gray-400">캡틴:</span>
+                        <span className="text-white ml-2">{creatorMap[crew.id] ? `${creatorMap[crew.id]}님` : '알 수 없음'}</span>
+                      </div>
+                      <div>
                         <span className="text-gray-400">종목:</span>
                         <span className="text-white ml-2">{getExerciseName(crew.exerciseType)}</span>
                       </div>
@@ -374,10 +447,10 @@ const CrewSearchPage = () => {
                         <span className="text-gray-400">알람시간:</span>
                         <span className="text-white ml-2">{formatAlarmTime(crew.alarm)}</span>
                       </div>
-                      <div>
-                        <span className="text-gray-400">생성일:</span>
-                        <span className="text-white ml-2">{formatDate(crew.createdAt)}</span>
-                      </div>
+                    </div>
+                    <div className="text-sm mb-2">
+                      <span className="text-gray-400">생성일:</span>
+                      <span className="text-white ml-2">{formatDate(crew.createdAt)}</span>
                     </div>
                     <div className="flex items-center gap-4 text-sm">
                       <div className="flex items-center gap-1">
@@ -386,11 +459,25 @@ const CrewSearchPage = () => {
                       </div>
                     </div>
                   </div>
-                  <div>
+                  <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                    <button
+                      onClick={() => handleRecommend(crew)}
+                      disabled={hasCancelledMap[crew.id]}
+                      className={`flex-1 md:flex-none px-3 py-2 text-sm md:px-4 md:py-2 md:text-base rounded-lg font-semibold whitespace-nowrap transition ${
+                        hasCancelledMap[crew.id]
+                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                          : hasRecommendedMap[crew.id]
+                          ? 'bg-yellow-600 text-white hover:bg-yellow-700'
+                          : 'bg-yellow-500 text-white hover:bg-yellow-600'
+                      }`}
+                      title={hasCancelledMap[crew.id] ? '이미 취소한 크루는 다시 추천할 수 없습니다' : hasRecommendedMap[crew.id] ? '추천 취소' : '추천하기'}
+                    >
+                      {hasRecommendedMap[crew.id] ? '⭐ 추천됨' : '⭐ 추천'}
+                    </button>
                     <button
                       onClick={() => handleJoin(crew)}
                       disabled={crew.maxMembers !== null && crew.currentMembers >= crew.maxMembers}
-                      className={`px-6 py-3 rounded-lg font-semibold whitespace-nowrap transition ${
+                      className={`flex-1 md:flex-none px-3 py-2 text-sm md:px-6 md:py-3 md:text-base rounded-lg font-semibold whitespace-nowrap transition ${
                         crew.maxMembers !== null && crew.currentMembers >= crew.maxMembers
                           ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
                           : 'bg-purple-500 text-white hover:bg-purple-600'

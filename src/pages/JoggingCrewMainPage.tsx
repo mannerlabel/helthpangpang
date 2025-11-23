@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
+import NavigationButtons from '@/components/NavigationButtons'
 
 const JoggingCrewMainPage = () => {
   const navigate = useNavigate()
@@ -38,12 +39,7 @@ const JoggingCrewMainPage = () => {
       <div className="max-w-6xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-5xl font-bold text-white">함께 조깅</h1>
-          <button
-            onClick={() => navigate('/jogging-mode-select')}
-            className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
-          >
-            뒤로
-          </button>
+          <NavigationButtons backPath="/jogging-mode-select" />
         </div>
         <p className="text-xl text-gray-300 text-center mb-12">조깅 크루를 생성하거나 참여하세요</p>
 
