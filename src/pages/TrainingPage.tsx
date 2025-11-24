@@ -626,22 +626,8 @@ const TrainingPage = () => {
 
     setPoseScore(score)
 
-    // 점수가 측정되는 시점의 이미지 캡처 (매 프레임마다)
-    // 최고/최저 점수 업데이트를 위해 점수 측정 시점의 이미지 사용
-    // 이미지를 먼저 캡처한 후 점수와 함께 저장하여 정확한 시점 매칭
-    if (cameraVideoRef.current) {
-      // 이미지를 동기적으로 캡처하여 점수 측정 시점과 정확히 일치시킴
-      const currentImage = imageCaptureService.captureImage(cameraVideoRef.current)
-      
-      // 최고 점수 업데이트 (점수가 측정되는 시점의 이미지)
-      if (!bestScore || score > bestScore.score) {
-        setBestScore({ score, image: currentImage })
-      }
-      // 최저 점수 업데이트 (점수가 측정되는 시점의 이미지)
-      if (!worstScore || score < worstScore.score) {
-        setWorstScore({ score, image: currentImage })
-      }
-    }
+    // 매 프레임마다 이미지 캡처 제거 (메모리 낭비 방지)
+    // 최고/최저 점수 이미지는 카운트 증가 시점의 이미지만 사용
 
     // 카운트 체크 (스쿼트는 SquatCounter 사용)
     // 매 프레임마다 분석 수행
@@ -685,8 +671,20 @@ const TrainingPage = () => {
       // 카운트 완료 시 점수 저장 및 표시
       setLastCountScore(score)
       
-      // 세션 카운트 업데이트 (totalCount는 session.counts.length와 동기화)
-      const image = imageCaptureService.captureImage(cameraVideoRef.current)
+      // 카운트 증가 시점에만 이미지 캡처 (메모리 최적화)
+      // 이 이미지는 해당 카운트의 기록과 최고/최저 점수 판단에 사용됨
+      const image = cameraVideoRef.current 
+        ? imageCaptureService.captureImage(cameraVideoRef.current)
+        : undefined
+      
+      // 최고 점수 업데이트 (카운트 증가 시점의 점수와 이미지 사용)
+      if (!bestScore || score > bestScore.score) {
+        setBestScore({ score, image: image || '' })
+      }
+      // 최저 점수 업데이트 (카운트 증가 시점의 점수와 이미지 사용)
+      if (!worstScore || score < worstScore.score) {
+        setWorstScore({ score, image: image || '' })
+      }
       
       // countService에서 분석 결과 가져오기 (관절 각도, 깊이, 상태 정보 포함)
       // strategy.analyze()의 결과를 가져오기 위해 countService의 내부 상태 확인
@@ -702,7 +700,7 @@ const TrainingPage = () => {
             count: newCount,
             timestamp: Date.now(),
             poseScore: score,
-            image,
+            image, // 카운트 증가 시점의 이미지 저장 (임시)
             setNumber: currentSet,
             angle: strategyResult?.angle, // 관절 각도 (스쿼트-무릎각도, 푸시업-팔꿈치각도, 런지-무릎각도)
             depth: strategyResult?.depth, // 운동 깊이 (스쿼트, 런지 등)

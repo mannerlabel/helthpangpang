@@ -49,7 +49,7 @@ const JoggingModeSelectPage = () => {
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 p-8">
       <div className="max-w-4xl mx-auto">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-5xl font-bold text-white">조깅 모드 선택</h1>
+          <h1 className="text-5xl font-bold text-white">조깅모드</h1>
           <NavigationButtons backPath="/mode-select" />
         </div>
         <p className="text-xl text-gray-300 text-center mb-12">조깅 모드를 선택하세요</p>

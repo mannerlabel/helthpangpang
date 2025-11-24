@@ -39,7 +39,9 @@ const JoggingGoalCreatePage = () => {
           const user = authService.getCurrentUser()
           if (!user) return
           
-          const goals = await databaseService.getJoggingGoalsByUserId(user.id)
+          const result = await databaseService.getJoggingGoalsByUserId(user.id)
+          // pagination 결과인 경우 data 배열 사용, 아니면 직접 배열 사용
+          const goals = Array.isArray(result) ? result : result.data
           const goal = goals.find((g: JoggingGoal) => g.id === goalId)
           
           if (goal) {

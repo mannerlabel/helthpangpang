@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
@@ -40,12 +40,13 @@ const CrewListPage = () => {
     }
     window.addEventListener('storage', handleStorageChange)
     
-    // 주기적으로 목록 새로고침 (다른 PC에서의 변경사항 감지) - 간격을 늘림
-    const interval = setInterval(() => loadMyCrews(true), 10000) // 10초마다
+    // 주기적으로 목록 새로고침 제거 (너무 자주 새로고침되어 성능 저하)
+    // 필요시 수동 새로고침 버튼 추가 고려
+    // const interval = setInterval(() => loadMyCrews(true), 60000) // 1분마다 (필요시 활성화)
     
     return () => {
       window.removeEventListener('storage', handleStorageChange)
-      clearInterval(interval)
+      // clearInterval(interval) // interval 제거 시 주석 처리
     }
   }, [])
 
@@ -58,8 +59,20 @@ const CrewListPage = () => {
   }
 
   // location이 변경될 때마다 목록 다시 로드 (생성/수정 후 돌아올 때)
+  // location.state에 reload 플래그가 있을 때만 실행하여 불필요한 재로드 방지
+  const prevLocationKeyRef = useRef<string | null>(null)
   useEffect(() => {
-    loadMyCrews(true)
+    // location.key가 실제로 변경되었고, reload 플래그가 있을 때만 실행
+    if (location.key !== prevLocationKeyRef.current) {
+      prevLocationKeyRef.current = location.key
+      // location.state에 reload 플래그가 있을 때만 실행
+      if (location.state?.reload) {
+        // 이미 로드 중이 아닐 때만 실행
+        if (!pagination.loading) {
+          loadMyCrews(true)
+        }
+      }
+    }
   }, [location.key])
 
   const loadMyCrews = async (reset: boolean = false) => {
@@ -282,6 +295,11 @@ const CrewListPage = () => {
       return
     }
 
+    // 이미 처리 중이면 중복 클릭 방지
+    if (pagination.loading) {
+      return
+    }
+
     try {
       console.log('🔘 추천 버튼 클릭:', { crewId: crew.id, userId: user.id, crewName: crew.name })
       const result = await databaseService.toggleCrewRecommendation(crew.id, user.id)
@@ -289,30 +307,31 @@ const CrewListPage = () => {
       
       if (result.success) {
         console.log('✅ 추천 처리 성공')
-        setHasRecommendedMap(prev => ({ ...prev, [crew.id]: result.isRecommended }))
-        if (!result.isRecommended) {
-          setHasCancelledMap(prev => ({ ...prev, [crew.id]: true }))
-        }
         
-        // 추천수 업데이트를 위해 크루 정보만 다시 가져오기
-        try {
-          const updatedCrew = await databaseService.getCrewById(crew.id)
-          if (updatedCrew) {
-            // 해당 크루만 목록에서 업데이트
-            setMyCrews(prev => prev.map(c => c.id === crew.id ? updatedCrew as Crew : c))
-            // 추천 상태만 다시 확인
-            const hasRecommended = await databaseService.hasUserRecommendedCrew(crew.id, user.id)
-            setHasRecommendedMap(prev => ({ ...prev, [crew.id]: hasRecommended }))
-          }
-        } catch (loadError) {
-          console.warn('크루 정보 새로고침 중 오류 (추천은 성공):', loadError)
-          // 추천은 성공했으므로 전체 목록 새로고침 시도
-          try {
-            await loadMyCrews()
-          } catch (fullLoadError) {
-            console.warn('전체 목록 새로고침도 실패:', fullLoadError)
-          }
-        }
+        // 추천 상태 즉시 업데이트 (새로고침 없이)
+        setHasRecommendedMap(prev => ({ ...prev, [crew.id]: result.isRecommended }))
+        
+        // toggleCrewRecommendation이 취소 기록을 삭제하고 다시 추천할 수 있게 해주므로
+        // 취소 상태는 항상 해제 (버튼이 비활성화되지 않도록)
+        setHasCancelledMap(prev => {
+          const newMap = { ...prev }
+          delete newMap[crew.id]
+          return newMap
+        })
+        
+        // 추천수 업데이트를 위해 크루 정보만 다시 가져오기 (비동기, UI 블로킹 없음)
+        databaseService.getCrewById(crew.id)
+          .then(updatedCrew => {
+            if (updatedCrew) {
+              // 해당 크루만 목록에서 업데이트 (추천수 반영)
+              setMyCrews(prev => prev.map(c => c.id === crew.id ? { ...updatedCrew as Crew, recommendations: result.recommendations } : c))
+            }
+          })
+          .catch(loadError => {
+            // 크루 정보 가져오기 실패해도 추천수는 result에서 받았으므로 업데이트
+            console.warn('크루 정보 새로고침 중 오류 (추천수는 업데이트됨):', loadError)
+            setMyCrews(prev => prev.map(c => c.id === crew.id ? { ...c, recommendations: result.recommendations } : c))
+          })
       } else {
         console.warn('⚠️ 추천 처리 실패:', result)
         if (hasCancelledMap[crew.id]) {
@@ -378,13 +397,13 @@ const CrewListPage = () => {
         </div>
 
         {/* 영상/음성 토글 버튼 */}
-        <div className="bg-gray-800/90 rounded-2xl p-4 mb-6">
+        <div className="bg-gray-800/90 rounded-2xl p-3 mb-6">
           <div className="flex items-center justify-between">
-            <span className="text-white font-semibold">나의 공유 설정</span>
-            <div className="flex gap-4">
+            <span className="text-white font-semibold text-sm">미디어공유</span>
+            <div className="flex gap-2">
               <button
                 onClick={() => setVideoEnabled(!videoEnabled)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold text-sm transition ${
                   videoEnabled
                     ? 'bg-blue-500 text-white'
                     : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
@@ -395,7 +414,7 @@ const CrewListPage = () => {
               </button>
               <button
                 onClick={() => setAudioEnabled(!audioEnabled)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold text-sm transition ${
                   audioEnabled
                     ? 'bg-green-500 text-white'
                     : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
@@ -492,15 +511,12 @@ const CrewListPage = () => {
                   <div className="flex flex-wrap gap-2 w-full md:w-auto">
                     <button
                       onClick={() => handleRecommend(crew)}
-                      disabled={hasCancelledMap[crew.id]}
                       className={`flex-1 md:flex-none px-3 py-2 text-sm md:px-4 md:py-2 md:text-base rounded-lg font-semibold whitespace-nowrap transition ${
-                        hasCancelledMap[crew.id]
-                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                          : hasRecommendedMap[crew.id]
+                        hasRecommendedMap[crew.id]
                           ? 'bg-yellow-600 text-white hover:bg-yellow-700'
                           : 'bg-yellow-500 text-white hover:bg-yellow-600'
                       }`}
-                      title={hasCancelledMap[crew.id] ? '이미 취소한 크루는 다시 추천할 수 없습니다' : hasRecommendedMap[crew.id] ? '추천 취소' : '추천하기'}
+                      title={hasRecommendedMap[crew.id] ? '추천 취소' : '추천하기'}
                     >
                       {hasRecommendedMap[crew.id] ? '⭐ 추천됨' : '⭐ 추천'}
                     </button>

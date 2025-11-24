@@ -157,11 +157,7 @@ const JoggingAlonePage = () => {
     try {
       await databaseService.deleteJoggingGoal(goalId)
       // 목표 목록 다시 로드
-      const user = authService.getCurrentUser()
-      if (user) {
-        const goals = await databaseService.getJoggingGoalsByUserId(user.id)
-        setGoals(goals)
-      }
+      await loadGoals(true)
       alert('목표가 삭제되었습니다.')
     } catch (error) {
       console.error('목표 삭제 실패:', error)

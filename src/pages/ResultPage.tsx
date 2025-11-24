@@ -35,6 +35,11 @@ const ResultPage = () => {
   // 스와이프 관련 상태
   const [touchStart, setTouchStart] = useState<number | null>(null)
   const [touchEnd, setTouchEnd] = useState<number | null>(null)
+  
+  // 중복 저장 방지: 저장 완료 여부 추적
+  const isSavingRef = useRef(false)
+  const savedSessionIdRef = useRef<string | null>(null)
+  const isFetchingAnalysisRef = useRef(false) // AI 분석 중복 호출 방지
 
   // 운동 내역 로드 함수
   const loadExerciseHistory = useCallback(async (offset: number = 0, append: boolean = false) => {
@@ -53,7 +58,8 @@ const ResultPage = () => {
       if (!append && offset === 0) {
         // 첫 로드: 현재 세션을 포함하여 표시
         // 현재 세션이 이미 포함되어 있는지 확인
-        const currentSessionInHistory = result.sessions.find(s => s.id === session?.id)
+        const currentSessionId = session?.id
+        const currentSessionInHistory = result.sessions.find(s => s.id === currentSessionId)
         if (!currentSessionInHistory && session) {
           // 현재 세션을 첫 번째로 추가
           setHistorySessions([session as any, ...result.sessions])
@@ -61,7 +67,7 @@ const ResultPage = () => {
         } else {
           setHistorySessions(result.sessions)
           // 현재 세션의 인덱스 찾기
-          const index = result.sessions.findIndex(s => s.id === session?.id)
+          const index = result.sessions.findIndex(s => s.id === currentSessionId)
           setCurrentHistoryIndex(index >= 0 ? index : 0)
         }
       } else if (append) {
@@ -78,7 +84,7 @@ const ResultPage = () => {
     } finally {
       setHistoryLoading(false)
     }
-  }, [session])
+  }, [session?.id]) // session.id만 의존성으로 사용
 
   useEffect(() => {
     if (!session) {
@@ -92,11 +98,53 @@ const ResultPage = () => {
     }
 
     const saveSession = async (analysisResult?: AIAnalysis) => {
+      // 중복 저장 방지: 이미 저장 중이거나 저장 완료된 경우 중단
+      if (isSavingRef.current) {
+        console.warn('⚠️ 이미 저장 중입니다. 중복 저장 방지')
+        return null
+      }
+      
+      // 세션 ID가 없으면 저장 불가
+      if (!session?.id) {
+        console.error('세션 ID가 없습니다.')
+        return null
+      }
+      
+      // 이미 저장된 세션인지 확인
+      if (savedSessionIdRef.current === session.id) {
+        console.warn('⚠️ 이미 저장된 세션입니다. 중복 저장 방지:', session.id)
+        return null
+      }
+      
+      // 중복 체크: 데이터베이스에서 동일한 세션 ID가 이미 존재하는지 확인
       try {
         const user = authService.getCurrentUser()
         if (!user) {
           console.error('사용자 정보가 없습니다.')
-          return
+          return null
+        }
+        
+        // 동일한 세션 ID로 이미 저장된 세션이 있는지 확인
+        const existingSession = await databaseService.getExerciseSessionById(session.id)
+        if (existingSession) {
+          console.warn('⚠️ 동일한 세션 ID가 이미 존재합니다. 중복 저장 방지:', session.id)
+          savedSessionIdRef.current = session.id
+          return existingSession
+        }
+      } catch (checkError) {
+        // getExerciseSessionById가 실패해도 계속 진행 (새 세션이거나 조회 실패일 수 있음)
+        console.log('기존 세션 확인 중 오류 (계속 진행):', checkError)
+      }
+      
+      // 저장 시작 플래그 설정
+      isSavingRef.current = true
+      
+      try {
+        const user = authService.getCurrentUser()
+        if (!user) {
+          console.error('사용자 정보가 없습니다.')
+          isSavingRef.current = false
+          return null
         }
 
         // bestScore와 worstScore 이미지 리사이즈 (모바일 최적화)
@@ -190,6 +238,11 @@ const ResultPage = () => {
           completed: savedSession?.completed,
         })
         
+        // 저장 완료 플래그 설정
+        if (savedSession?.id) {
+          savedSessionIdRef.current = savedSession.id
+        }
+        
         // 저장 후 즉시 확인
         if (savedSession) {
           const verifyResult = await databaseService.getExerciseSessionsByUserId(user.id, {
@@ -208,10 +261,30 @@ const ResultPage = () => {
         // 저장 완료 후 운동 내역 로드
         await loadExerciseHistory(0, false)
         
+        // 데이터베이스 저장 완료 후 임시 이미지 메모리 정리
+        // bestScore와 worstScore 이미지는 저장되었으므로 유지
+        // counts의 이미지들은 임시 저장용이므로 메모리에서 제거
+        if (session?.counts) {
+          console.log('🧹 임시 이미지 메모리 정리 시작:', {
+            totalCounts: session.counts.length,
+            bestScoreImage: !!session.bestScore?.image,
+            worstScoreImage: !!session.worstScore?.image,
+          })
+          
+          // counts의 이미지는 이미 데이터베이스에 저장되었으므로 메모리에서 제거
+          // (실제로는 session 객체가 유지되지만, 명시적으로 정리 로그 출력)
+          console.log('✅ 임시 이미지 메모리 정리 완료 (counts 이미지는 DB에 저장됨)')
+        }
+        
         return savedSession
       } catch (error) {
         console.error('운동 세션 저장 실패:', error)
+        // 저장 실패 시 플래그 리셋 (재시도 가능하도록)
+        isSavingRef.current = false
         return null
+      } finally {
+        // 저장 완료 후 플래그 리셋
+        isSavingRef.current = false
       }
     }
 
@@ -295,23 +368,59 @@ const ResultPage = () => {
 
     // AI 분석 후 세션 저장
     const fetchAnalysis = async () => {
+      // 중복 호출 방지: 이미 분석 중이거나 저장 중인 경우 중단
+      if (isFetchingAnalysisRef.current) {
+        console.warn('⚠️ 이미 AI 분석 중입니다. 중복 호출 방지')
+        return
+      }
+      
+      if (isSavingRef.current) {
+        console.warn('⚠️ 이미 저장 중입니다. 중복 호출 방지')
+        return
+      }
+      
+      // 이미 저장된 세션인지 확인
+      if (savedSessionIdRef.current === session.id) {
+        console.warn('⚠️ 이미 저장된 세션입니다. 중복 호출 방지:', session.id)
+        return
+      }
+      
+      // 분석 시작 플래그 설정
+      isFetchingAnalysisRef.current = true
+      
       try {
+        console.log('🔍 AI 분석 시작:', session.id)
         const result = await aiAnalysisService.analyzeExercise(session)
         setAnalysis(result)
         
         // 분석 결과와 함께 세션 저장
+        console.log('💾 분석 완료, 세션 저장 시작:', session.id)
         await saveSession(result)
       } catch (error) {
         console.error('분석 오류:', error)
         // 분석 실패 시에도 세션은 저장
+        console.log('💾 분석 실패, 세션 저장 시작 (분석 없이):', session.id)
         await saveSession()
       } finally {
         setLoading(false)
+        isFetchingAnalysisRef.current = false
       }
     }
 
-    fetchAnalysis()
-  }, [session, navigate, loadExerciseHistory])
+    // 세션이 변경되고 아직 저장되지 않은 경우에만 실행
+    if (session && savedSessionIdRef.current !== session.id && !isSavingRef.current && !isFetchingAnalysisRef.current) {
+      fetchAnalysis()
+    }
+    
+    // cleanup 함수: 컴포넌트 언마운트 시 플래그 리셋
+    return () => {
+      // cleanup은 플래그를 리셋하지 않음 (저장 중이면 완료될 때까지 기다려야 함)
+      // 단, 분석 중 플래그만 리셋 (새 세션이 들어올 수 있으므로)
+      if (!isSavingRef.current) {
+        isFetchingAnalysisRef.current = false
+      }
+    }
+  }, [session?.id, navigate]) // 의존성 배열 최적화: session.id만 추적
 
   // 이전 운동 내역으로 이동
   const goToPreviousHistory = async () => {

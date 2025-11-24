@@ -44,9 +44,17 @@ const ModeSelectionPage = () => {
   const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null)
   const [overlayPosition, setOverlayPosition] = useState<{ x: number; y: number } | null>(null)
 
-  const calculateWeeklyData = (sessions: ExerciseSession[]): { date: string; count: number }[] => {
+  const calculateWeeklyData = (sessions: ExerciseSession[]): { 
+    date: string
+    count: number
+    details: Array<{ type: string; count: number; distance?: number }>
+  }[] => {
     const today = new Date()
-    const weekData: { date: string; count: number }[] = []
+    const weekData: { 
+      date: string
+      count: number
+      details: Array<{ type: string; count: number; distance?: number }>
+    }[] = []
     
     for (let i = 6; i >= 0; i--) {
       const date = new Date(today)
@@ -66,9 +74,44 @@ const ModeSelectionPage = () => {
         return sum + sessionTotal
       }, 0)
       
+      // 종목별 내역 계산
+      const detailsMap = new Map<string, { count: number; distance?: number }>()
+      
+      daySessions.forEach(session => {
+        const sessionTotal = (session as any).totalCount || session.counts.length
+        
+        // 조깅 모드 확인 (mode가 'jogging'이거나 config에 distance 정보가 있는 경우)
+        const isJogging = session.mode === 'jogging' || (session.config as any)?.distance !== undefined
+        const distance = (session as any).distance || (session.config as any)?.distance || 0
+        
+        if (isJogging && distance > 0) {
+          // 조깅 모드: 거리 표시
+          const existing = detailsMap.get('조깅') || { count: 0, distance: 0 }
+          detailsMap.set('조깅', {
+            count: existing.count + 1, // 세션 수
+            distance: (existing.distance || 0) + distance
+          })
+        } else {
+          // 일반 운동 모드: 종목별 카운트
+          const exerciseType = session.config?.type || 'custom'
+          const exerciseName = getExerciseName(exerciseType)
+          const existing = detailsMap.get(exerciseName) || { count: 0 }
+          detailsMap.set(exerciseName, {
+            count: existing.count + sessionTotal
+          })
+        }
+      })
+      
+      const details = Array.from(detailsMap.entries()).map(([type, data]) => ({
+        type,
+        count: data.count,
+        distance: data.distance
+      }))
+      
       weekData.push({
         date: dateStr,
         count: totalCount,
+        details,
       })
     }
     
@@ -76,11 +119,13 @@ const ModeSelectionPage = () => {
   }
 
   useEffect(() => {
+    let isMounted = true // 컴포넌트가 마운트되어 있는지 추적
+    
     const loadSessions = async () => {
       try {
         const user = authService.getCurrentUser()
         if (!user) {
-          setLoading(false)
+          if (isMounted) setLoading(false)
           return
         }
 
@@ -107,28 +152,40 @@ const ModeSelectionPage = () => {
           } : null,
         })
 
-        setSessions(result.sessions)
-        setHasMoreSessions(result.hasMore)
-        setSessionOffset(20) // 다음 로드를 위한 오프셋
+        // 중복 제거: ID 기준으로 중복 제거
+        const uniqueSessions = result.sessions.filter((session, index, self) =>
+          index === self.findIndex(s => s.id === session.id)
+        )
 
-        // 1주일 데이터 계산
-        const weekData = calculateWeeklyData(result.sessions)
-        setWeeklyData(weekData)
+        if (isMounted) {
+          setSessions(uniqueSessions)
+          setHasMoreSessions(result.hasMore)
+          setSessionOffset(20) // 다음 로드를 위한 오프셋
 
-        // 세션이 있으면 첫 번째 세션을 기본으로 설정
-        if (result.sessions.length > 0) {
-          setCurrentSessionIndex(0)
+          // 1주일 데이터 계산
+          const weekData = calculateWeeklyData(uniqueSessions)
+          setWeeklyData(weekData)
+
+          // 세션이 있으면 첫 번째 세션을 기본으로 설정
+          if (uniqueSessions.length > 0) {
+            setCurrentSessionIndex(0)
+          }
+          
+          setLoading(false)
         }
-        
-        setLoading(false)
       } catch (error) {
         console.error('운동 내역 로드 실패:', error)
-        setLoading(false)
+        if (isMounted) setLoading(false)
       }
     }
 
     loadSessions()
     loadUserRank()
+    
+    // cleanup 함수: 컴포넌트 언마운트 시 플래그 설정
+    return () => {
+      isMounted = false
+    }
   }, [])
 
   const loadUserRank = async () => {
@@ -165,12 +222,14 @@ const ModeSelectionPage = () => {
   const currentSession = sessions[currentSessionIndex] || null
   const currentAnalysis = currentSession?.analysis || null
 
-  // 디버깅: currentSession이 변경될 때마다 로그 출력
+  // 디버깅: currentSession이 변경될 때마다 로그 출력 (의존성 최소화)
   useEffect(() => {
-    if (currentSession) {
+    if (currentSession && sessions.length > 0) {
+      // 세션이 실제로 변경되었을 때만 로그 출력
+      const sessionId = currentSession.id
       console.log('🔄 현재 세션 업데이트:', {
         index: currentSessionIndex,
-        sessionId: currentSession.id,
+        sessionId: sessionId,
         endTime: currentSession.endTime,
         startTime: currentSession.startTime,
         endTimeFormatted: currentSession.endTime ? new Date(currentSession.endTime).toLocaleString('ko-KR') : null,
@@ -182,13 +241,8 @@ const ModeSelectionPage = () => {
         countsLength: currentSession.counts?.length || 0,
         averageScore: currentSession.averageScore,
       })
-    } else {
-      console.log('⚠️ 현재 세션이 null입니다:', {
-        index: currentSessionIndex,
-        sessionsLength: sessions.length,
-      })
     }
-  }, [currentSessionIndex, currentSession, currentAnalysis, sessions.length])
+  }, [currentSessionIndex, currentSession?.id]) // 의존성을 최소화하여 불필요한 재실행 방지
 
   // 추가 세션 로드
   const loadMoreSessions = async () => {
@@ -207,7 +261,12 @@ const ModeSelectionPage = () => {
       })
 
       // databaseService.getExerciseSessionsByUserId는 이미 ExerciseSession 형식으로 변환된 데이터를 반환
-      setSessions(prev => [...prev, ...result.sessions])
+      // 중복 체크: 기존 세션 ID와 비교하여 중복 제거
+      setSessions(prev => {
+        const existingIds = new Set(prev.map(s => s.id))
+        const newSessions = result.sessions.filter(s => !existingIds.has(s.id))
+        return [...prev, ...newSessions]
+      })
       setHasMoreSessions(result.hasMore)
       setSessionOffset(prev => prev + 20)
     } catch (error) {
@@ -254,10 +313,13 @@ const ModeSelectionPage = () => {
       setCurrentSessionIndex(currentSessionIndex + 1)
     } else if (hasMoreSessions) {
       // 다음 페이지 로드
+      const previousLength = sessions.length
       await loadMoreSessions()
       // 새로 로드된 첫 번째 항목으로 이동
+      // loadMoreSessions가 완료된 후 세션이 업데이트되므로, 
+      // useEffect를 통해 sessions가 변경될 때 인덱스를 업데이트
       setTimeout(() => {
-        setCurrentSessionIndex(sessions.length)
+        setCurrentSessionIndex(previousLength)
       }, 100)
     }
   }
@@ -408,7 +470,17 @@ const ModeSelectionPage = () => {
               </button>
             </div>
             
-            <NavigationButtons backPath="/home" showHome={true} showBack={false} />
+            {/* 회원 이름과 단계 레벨 표시 (홈 버튼 대신) */}
+            <div className="flex items-center gap-2 px-3 py-2 bg-gray-700/80 backdrop-blur-sm rounded-full">
+              <span className="text-white text-sm font-semibold flex items-center gap-2">
+                <span className="text-blue-400">👤</span>
+                {authService.getCurrentUser()?.name || '사용자'}님
+                <RankBadge rank={userRank} type="user" size="sm" showText={false} />
+              </span>
+            </div>
+            
+            {/* 홈 버튼 주석처리 */}
+            {/* <NavigationButtons backPath="/home" showHome={true} showBack={false} /> */}
           </div>
 
           {/* 모바일 햄버거 메뉴 */}
@@ -560,10 +632,10 @@ const ModeSelectionPage = () => {
                 })}
               </div>
               
-              {/* 오버레이 - 일일 운동 횟수만 표시 */}
+              {/* 오버레이 - 일일 종목별 내역 표시 */}
               {selectedDayIndex !== null && overlayPosition && weeklyData[selectedDayIndex].count > 0 && (
                 <div
-                  className="graph-overlay fixed z-50 bg-gray-800/95 border border-gray-600 rounded-lg p-4 shadow-2xl min-w-[150px]"
+                  className="graph-overlay fixed z-50 bg-gray-800/95 border border-gray-600 rounded-lg p-4 shadow-2xl min-w-[200px]"
                   style={{
                     left: `${overlayPosition.x}px`,
                     top: `${overlayPosition.y}px`,
@@ -571,11 +643,26 @@ const ModeSelectionPage = () => {
                   }}
                   onMouseLeave={handleCloseOverlay}
                 >
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-blue-400">
-                      {weeklyData[selectedDayIndex].count}회
+                  <div className="text-center mb-2">
+                    <div className="text-lg font-bold text-blue-400 mb-2">
+                      일일 운동 내역
                     </div>
-                    <div className="text-sm text-gray-400 mt-1">일일 운동 횟수</div>
+                  </div>
+                  <div className="space-y-2">
+                    {weeklyData[selectedDayIndex].details.length > 0 ? (
+                      weeklyData[selectedDayIndex].details.map((detail, idx) => (
+                        <div key={idx} className="text-sm text-white flex justify-between items-center">
+                          <span className="text-gray-300">{detail.type}:</span>
+                          <span className="font-semibold text-blue-400">
+                            {detail.distance !== undefined 
+                              ? `${detail.distance.toFixed(1)}km` 
+                              : `${detail.count}개`}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-sm text-gray-400">내역 없음</div>
+                    )}
                   </div>
                 </div>
               )}

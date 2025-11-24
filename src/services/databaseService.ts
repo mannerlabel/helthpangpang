@@ -3148,6 +3148,88 @@ class DatabaseService {
           supabaseUserId = await this.getSupabaseUserId(session.userId)
         }
         
+        // 중복 체크: 동일한 start_time, user_id, mode를 가진 세션이 이미 존재하는지 확인
+        // (같은 시간에 같은 사용자가 같은 운동을 한 경우 중복으로 간주)
+        // end_time도 포함하여 더 정확한 중복 체크
+        const startTimeISO = new Date(session.startTime).toISOString()
+        const endTimeISO = session.endTime ? new Date(session.endTime).toISOString() : null
+        
+        // 첫 번째 중복 체크: start_time 기준 (정확한 시간 매칭)
+        const { data: existingSessions, error: checkError } = await supabase
+          .from('exercise_sessions')
+          .select('id, start_time, end_time, user_id, mode')
+          .eq('user_id', supabaseUserId)
+          .eq('mode', session.mode)
+          .eq('start_time', startTimeISO) // 정확한 시간 매칭
+          .limit(5) // 여러 개가 있을 수 있으므로 5개까지 확인
+        
+        if (checkError) {
+          console.warn('⚠️ 중복 체크 중 오류 (계속 진행):', checkError)
+        } else if (existingSessions && existingSessions.length > 0) {
+          // end_time도 있는 경우 end_time도 비교
+          let matchedSession = null
+          if (endTimeISO) {
+            matchedSession = existingSessions.find(s => s.end_time === endTimeISO)
+          } else {
+            // end_time이 없는 경우 첫 번째 세션 사용
+            matchedSession = existingSessions[0]
+          }
+          
+          if (matchedSession) {
+            console.warn('⚠️ 중복 세션 발견 (정확한 시간 매칭). 기존 세션 반환:', {
+              existingId: matchedSession.id,
+              startTime: matchedSession.start_time,
+              endTime: matchedSession.end_time,
+              checkTime: new Date().toISOString(),
+            })
+            
+            // 기존 세션 조회하여 반환
+            const existing = await this.getExerciseSessionById(matchedSession.id)
+            if (existing) {
+              return existing
+            }
+          } else if (existingSessions.length > 0) {
+            // start_time은 같지만 end_time이 다른 경우도 중복으로 간주 (같은 운동의 다른 저장 시도)
+            console.warn('⚠️ 중복 세션 발견 (start_time 일치, end_time 다름). 기존 세션 반환:', {
+              existingId: existingSessions[0].id,
+              startTime: existingSessions[0].start_time,
+              endTime: existingSessions[0].end_time,
+              newEndTime: endTimeISO,
+            })
+            
+            const existing = await this.getExerciseSessionById(existingSessions[0].id)
+            if (existing) {
+              return existing
+            }
+          }
+        }
+        
+        // 두 번째 중복 체크: 시간 범위 기준 (1초 전후, race condition 방지)
+        const { data: rangeSessions, error: rangeCheckError } = await supabase
+          .from('exercise_sessions')
+          .select('id, start_time, end_time')
+          .eq('user_id', supabaseUserId)
+          .eq('mode', session.mode)
+          .eq('completed', true)
+          .gte('start_time', new Date(session.startTime - 2000).toISOString()) // 2초 전
+          .lte('start_time', new Date(session.startTime + 2000).toISOString()) // 2초 후
+          .limit(1)
+        
+        if (!rangeCheckError && rangeSessions && rangeSessions.length > 0) {
+          const rangeSession = rangeSessions[0]
+          console.warn('⚠️ 중복 세션 발견 (시간 범위 체크). 기존 세션 반환:', {
+            existingId: rangeSession.id,
+            startTime: rangeSession.start_time,
+            endTime: rangeSession.end_time,
+            timeDiff: Math.abs(new Date(rangeSession.start_time).getTime() - session.startTime),
+          })
+          
+          const existing = await this.getExerciseSessionById(rangeSession.id)
+          if (existing) {
+            return existing
+          }
+        }
+        
         console.log('💾 Supabase에 저장 시도:', {
           table: 'exercise_sessions',
           originalUserId: session.userId,
@@ -3191,6 +3273,27 @@ class DatabaseService {
           .single()
         
         if (error) {
+          // 중복 키 오류인 경우 (unique constraint 위반)
+          if (error.code === '23505' || error.message?.includes('duplicate') || error.message?.includes('unique')) {
+            console.warn('⚠️ 중복 키 오류 발생. 기존 세션 조회 시도:', error)
+            // start_time과 user_id로 기존 세션 찾기
+            const { data: existingData } = await supabase
+              .from('exercise_sessions')
+              .select('id')
+              .eq('user_id', supabaseUserId)
+              .eq('start_time', new Date(session.startTime).toISOString())
+              .limit(1)
+              .single()
+            
+            if (existingData) {
+              const existing = await this.getExerciseSessionById(existingData.id)
+              if (existing) {
+                console.log('✅ 기존 세션 반환:', existing.id)
+                return existing
+              }
+            }
+          }
+          
           console.error('❌ Supabase 운동 세션 저장 실패:', error)
           console.error('에러 상세:', {
             message: error.message,
@@ -3410,7 +3513,38 @@ class DatabaseService {
           } : null,
         })
 
-        const sessions = (data || []).map((s: any) => this.mapSupabaseExerciseSession(s))
+        // 원본 데이터에서 중복 제거 (ID 기준)
+        const uniqueDataMap = new Map()
+        ;(data || []).forEach((s: any) => {
+          if (!uniqueDataMap.has(s.id)) {
+            uniqueDataMap.set(s.id, s)
+          } else {
+            console.warn('⚠️ 중복된 세션 ID 발견 (원본 데이터):', {
+              id: s.id,
+              start_time: s.start_time,
+              end_time: s.end_time,
+            })
+          }
+        })
+        
+        const uniqueData = Array.from(uniqueDataMap.values())
+        
+        // 매핑 후에도 중복 제거 (이중 안전장치)
+        const sessionsMap = new Map()
+        uniqueData.forEach((s: any) => {
+          const mapped = this.mapSupabaseExerciseSession(s)
+          if (sessionsMap.has(mapped.id)) {
+            console.warn('⚠️ 중복된 세션 ID 발견 (매핑 후):', {
+              id: mapped.id,
+              startTime: mapped.startTime,
+              endTime: mapped.endTime,
+            })
+          } else {
+            sessionsMap.set(mapped.id, mapped)
+          }
+        })
+        
+        const sessions = Array.from(sessionsMap.values())
         const total = count || 0
         const hasMore = offset + limit < total
 
@@ -3419,6 +3553,23 @@ class DatabaseService {
         const sessionsWithBestScore = sessions.filter(s => s.bestScore).length
         const sessionsWithWorstScore = sessions.filter(s => s.worstScore).length
         const sessionsWithImages = sessions.filter(s => s.bestScore?.image || s.worstScore?.image).length
+        
+        // 중복 제거 전후 비교
+        if (data && data.length !== uniqueData.length) {
+          console.warn('⚠️ 원본 데이터에서 중복 제거:', {
+            원본개수: data.length,
+            중복제거후: uniqueData.length,
+            제거된개수: data.length - uniqueData.length,
+          })
+        }
+        
+        if (uniqueData.length !== sessions.length) {
+          console.warn('⚠️ 매핑 후 중복 제거:', {
+            매핑전개수: uniqueData.length,
+            매핑후개수: sessions.length,
+            제거된개수: uniqueData.length - sessions.length,
+          })
+        }
         
         console.log('✅ Supabase 조회 성공:', {
           sessionsCount: sessions.length,
@@ -3613,8 +3764,16 @@ class DatabaseService {
     return newGoal
   }
 
-  async getSingleGoalsByUserId(userId: string, limit: number = 50, offset: number = 0): Promise<{ data: SingleGoal[]; hasMore: boolean; total?: number }> {
+  async getSingleGoalsByUserId(
+    userId: string, 
+    limit?: number, 
+    offset?: number
+  ): Promise<SingleGoal[] | { data: SingleGoal[]; hasMore: boolean; total?: number }> {
     await this.initialize()
+    
+    const usePagination = limit !== undefined && offset !== undefined
+    const paginationLimit = limit || 1000
+    const paginationOffset = offset || 0
     
     if (USE_SUPABASE && supabase) {
       try {
@@ -3624,13 +3783,24 @@ class DatabaseService {
           supabaseUserId = await this.getSupabaseUserId(userId)
         }
         
-        const { data, error, count } = await supabase
+        // 전체 개수 조회 (pagination이 필요한 경우)
+        let count = 0
+        if (usePagination) {
+          const { count: totalCount } = await supabase
           .from('single_goals')
-          .select('*', { count: 'exact' })
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', supabaseUserId)
+            .eq('is_active', true)
+          count = totalCount || 0
+        }
+        
+        const { data, error } = await supabase
+          .from('single_goals')
+          .select('*')
           .eq('user_id', supabaseUserId)
           .eq('is_active', true)
           .order('created_at', { ascending: false })
-          .range(offset, offset + limit - 1)
+          .range(paginationOffset, paginationOffset + paginationLimit - 1)
         
         if (error) {
           console.error('Supabase 싱글 목표 조회 실패:', error)
@@ -3638,8 +3808,13 @@ class DatabaseService {
         }
         
         const goals = (data || []).map((g: any) => this.mapSupabaseSingleGoal(g))
-        const hasMore = count ? offset + limit < count : false
-        return { data: goals, hasMore, total: count || undefined }
+        
+        if (usePagination) {
+          const hasMore = paginationOffset + paginationLimit < count
+          return { data: goals, hasMore, total: count }
+        }
+        
+        return goals
       } catch (e) {
         console.error('Supabase 싱글 목표 조회 중 오류:', e)
         // Supabase 실패 시 localStorage로 폴백
@@ -3649,10 +3824,15 @@ class DatabaseService {
     // localStorage 조회
     const goals = this.readTable<SingleGoal>('single_goals')
     const filteredGoals = goals.filter((g) => g.createdBy === userId && g.isActive)
+    
+    if (usePagination) {
     const totalGoals = filteredGoals.length
-    const paginatedGoals = filteredGoals.slice(offset, offset + limit)
-    const hasMore = offset + limit < totalGoals
+      const paginatedGoals = filteredGoals.slice(paginationOffset, paginationOffset + paginationLimit)
+      const hasMore = paginationOffset + paginationLimit < totalGoals
     return { data: paginatedGoals, hasMore, total: totalGoals }
+    }
+    
+    return filteredGoals
   }
 
   async updateSingleGoal(id: string, updates: Partial<SingleGoal>): Promise<SingleGoal | null> {
@@ -3773,8 +3953,7 @@ class DatabaseService {
         return this.mapSupabaseJoggingGoal(data)
       } catch (e) {
         console.error('Supabase 조깅 목표 저장 중 오류:', e)
-        // Supabase 실패 시 에러를 다시 throw하여 사용자에게 알림
-        throw e
+        // Supabase 실패 시 localStorage로 폴백
       }
     }
     
@@ -3791,8 +3970,16 @@ class DatabaseService {
     return newGoal
   }
 
-  async getJoggingGoalsByUserId(userId: string): Promise<JoggingGoal[]> {
+  async getJoggingGoalsByUserId(
+    userId: string, 
+    limit?: number, 
+    offset?: number
+  ): Promise<JoggingGoal[] | { data: JoggingGoal[]; hasMore: boolean; total?: number }> {
     await this.initialize()
+    
+    const usePagination = limit !== undefined && offset !== undefined
+    const paginationLimit = limit || 1000
+    const paginationOffset = offset || 0
     
     if (USE_SUPABASE && supabase) {
       try {
@@ -3802,12 +3989,24 @@ class DatabaseService {
           supabaseUserId = await this.getSupabaseUserId(userId)
         }
         
+        // 전체 개수 조회 (pagination이 필요한 경우)
+        let count = 0
+        if (usePagination) {
+          const { count: totalCount } = await supabase
+            .from('jogging_goals')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', supabaseUserId)
+            .eq('is_active', true)
+          count = totalCount || 0
+        }
+        
         const { data, error } = await supabase
           .from('jogging_goals')
           .select('*')
           .eq('user_id', supabaseUserId)
           .eq('is_active', true)
           .order('created_at', { ascending: false })
+          .range(paginationOffset, paginationOffset + paginationLimit - 1)
         
         if (error) {
           console.error('Supabase 조깅 목표 조회 실패:', error)
@@ -3815,8 +4014,13 @@ class DatabaseService {
         }
         
         const goals = (data || []).map((g: any) => this.mapSupabaseJoggingGoal(g))
-        const hasMore = count ? offset + limit < count : false
-        return { data: goals, hasMore, total: count || undefined }
+        
+        if (usePagination) {
+          const hasMore = paginationOffset + paginationLimit < count
+          return { data: goals, hasMore, total: count }
+        }
+        
+        return goals
       } catch (e) {
         console.error('Supabase 조깅 목표 조회 중 오류:', e)
         // Supabase 실패 시 localStorage로 폴백
@@ -3826,10 +4030,15 @@ class DatabaseService {
     // localStorage 조회
     const goals = this.readTable<JoggingGoal>('jogging_goals')
     const filteredGoals = goals.filter((g) => g.createdBy === userId && g.isActive)
+    
+    if (usePagination) {
     const totalGoals = filteredGoals.length
-    const paginatedGoals = filteredGoals.slice(offset, offset + limit)
-    const hasMore = offset + limit < totalGoals
+      const paginatedGoals = filteredGoals.slice(paginationOffset, paginationOffset + paginationLimit)
+      const hasMore = paginationOffset + paginationLimit < totalGoals
     return { data: paginatedGoals, hasMore, total: totalGoals }
+    }
+    
+    return filteredGoals
   }
 
   async updateJoggingGoal(id: string, updates: Partial<JoggingGoal>): Promise<JoggingGoal | null> {

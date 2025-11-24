@@ -28,24 +28,38 @@ const SingleGoalCreatePage = () => {
 
   // 수정 모드일 때 기존 데이터 로드
   useEffect(() => {
-    if (isEditMode && goalId) {
-      const savedGoals = JSON.parse(localStorage.getItem('singleGoals') || '[]')
-      const goal = savedGoals.find((g: SingleGoal) => g.id === goalId)
-      if (goal) {
-        setGoalName(goal.name)
-        setExerciseType(goal.exerciseType)
-        setSets(goal.exerciseConfig.sets)
-        setReps(goal.exerciseConfig.reps)
-        setRestTime(goal.exerciseConfig.restTime || 10)
-        setBackgroundMusic(goal.backgroundMusic || 1)
-        if (goal.alarm) {
-          setAlarmEnabled(goal.alarm.enabled)
-          setAlarmTime(goal.alarm.time)
-          setRepeatType(goal.alarm.repeatType)
-          setRepeatDays(goal.alarm.repeatDays || [])
+    const loadGoal = async () => {
+      if (isEditMode && goalId) {
+        try {
+          const user = authService.getCurrentUser()
+          if (!user) return
+          
+          const result = await databaseService.getSingleGoalsByUserId(user.id)
+          // pagination 결과인 경우 data 배열 사용, 아니면 직접 배열 사용
+          const goals = Array.isArray(result) ? result : result.data
+          const goal = goals.find((g: SingleGoal) => g.id === goalId)
+          
+          if (goal) {
+            setGoalName(goal.name)
+            setExerciseType(goal.exerciseType)
+            setSets(goal.exerciseConfig.sets)
+            setReps(goal.exerciseConfig.reps)
+            setRestTime(goal.exerciseConfig.restTime || 10)
+            setBackgroundMusic(goal.backgroundMusic || 1)
+            if (goal.alarm) {
+              setAlarmEnabled(goal.alarm.enabled)
+              setAlarmTime(goal.alarm.time)
+              setRepeatType(goal.alarm.repeatType)
+              setRepeatDays(goal.alarm.repeatDays || [])
+            }
+          }
+        } catch (error) {
+          console.error('목표 로드 실패:', error)
         }
       }
     }
+    
+    loadGoal()
 
     // 컴포넌트 언마운트 시 미리듣기 정지
     return () => {

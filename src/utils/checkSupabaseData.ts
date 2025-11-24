@@ -135,7 +135,7 @@ export async function checkSupabaseData() {
       // 4. databaseService를 통한 조회 (비교용)
       console.log('4️⃣ databaseService를 통한 조회 (비교용)...')
       const result = await databaseService.getExerciseSessionsByUserId(user.id, {
-        limit: 20,
+        limit: 100,
         offset: 0,
         orderBy: 'end_time',
         orderDirection: 'desc',
@@ -147,9 +147,79 @@ export async function checkSupabaseData() {
       console.log(`   - 더 많은 데이터: ${result.hasMore ? '예' : '아니오'}`)
       console.log('')
       
+      // 5. 중복 확인: ID 기준
+      console.log('5️⃣ 중복 확인: ID 기준...')
+      const idCount = new Map()
+      result.sessions.forEach(s => {
+        idCount.set(s.id, (idCount.get(s.id) || 0) + 1)
+      })
+      
+      const duplicateIds = Array.from(idCount.entries()).filter(([id, count]) => count > 1)
+      
+      if (duplicateIds.length > 0) {
+        console.log(`   ⚠️ ID 중복 발견: ${duplicateIds.length}개\n`)
+        duplicateIds.forEach(([id, count]) => {
+          const sessions = result.sessions.filter(s => s.id === id)
+          console.log(`   ID: ${id} (${count}개)`)
+          sessions.forEach((s, idx) => {
+            console.log(`     ${idx + 1}. startTime: ${s.startTime}, endTime: ${s.endTime || 'null'}`)
+          })
+        })
+      } else {
+        console.log('   ✅ ID 중복 없음')
+      }
+      console.log('')
+      
+      // 6. 중복 확인: 시간 기준
+      console.log('6️⃣ 중복 확인: 시간 기준...')
+      const timeCount = new Map()
+      result.sessions.forEach(s => {
+        const key = `${s.startTime}_${s.endTime || 'null'}`
+        timeCount.set(key, (timeCount.get(key) || 0) + 1)
+      })
+      
+      const duplicateTimes = Array.from(timeCount.entries()).filter(([key, count]) => count > 1)
+      
+      if (duplicateTimes.length > 0) {
+        console.log(`   ⚠️ 시간 중복 발견: ${duplicateTimes.length}개\n`)
+        duplicateTimes.forEach(([key, count]) => {
+          const [start, end] = key.split('_')
+          const sessions = result.sessions.filter(s => 
+            s.startTime?.toString() === start && (s.endTime?.toString() || 'null') === end
+          )
+          console.log(`   시간: ${start} ~ ${end} (${count}개)`)
+          sessions.forEach((s, idx) => {
+            console.log(`     ${idx + 1}. ID: ${s.id}, mode: ${s.mode}`)
+          })
+        })
+      } else {
+        console.log('   ✅ 시간 중복 없음')
+      }
+      console.log('')
+      
+      // 7. Supabase 직접 조회와 비교
+      console.log('7️⃣ Supabase 직접 조회와 비교...')
+      const { data: directSessions, error: directError } = await supabase
+        .from('exercise_sessions')
+        .select('id, start_time, end_time')
+        .eq('user_id', user.id)
+        .eq('completed', true)
+        .order('end_time', { ascending: false })
+      
+      if (!directError && directSessions) {
+        console.log(`   Supabase 직접 조회: ${directSessions.length}개`)
+        console.log(`   databaseService 조회: ${result.sessions.length}개`)
+        console.log(`   차이: ${Math.abs(directSessions.length - result.sessions.length)}개`)
+        
+        if (directSessions.length !== result.sessions.length) {
+          console.log('   ⚠️ 조회 결과가 일치하지 않습니다!')
+        }
+      }
+      console.log('')
+      
       if (result.sessions.length > 0) {
-        console.log('📋 세션 상세 정보:')
-        result.sessions.forEach((session, index) => {
+        console.log('📋 세션 상세 정보 (최근 10개):')
+        result.sessions.slice(0, 10).forEach((session, index) => {
           console.log(`   ${index + 1}. 세션 ID: ${session.id}`)
           console.log(`      - 모드: ${session.mode}`)
           console.log(`      - 시작시간: ${session.startTime ? new Date(session.startTime).toLocaleString('ko-KR') : '없음'}`)
@@ -166,7 +236,7 @@ export async function checkSupabaseData() {
         console.log('⚠️  databaseService로 조회된 세션이 없습니다.')
         console.log('')
         console.log('🔍 문제 분석:')
-        console.log('   - Supabase에는 completed=true인 세션이 4개 있습니다.')
+        console.log('   - Supabase에는 completed=true인 세션이 있습니다.')
         console.log('   - 하지만 현재 사용자의 세션은 조회되지 않습니다.')
         console.log('   - 가능한 원인:')
         console.log('     1. 다른 사용자의 세션일 수 있습니다.')
