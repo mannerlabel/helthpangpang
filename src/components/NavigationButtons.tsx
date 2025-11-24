@@ -7,6 +7,7 @@ interface NavigationButtonsProps {
   onBack?: () => void
   backPath?: string
   showHome?: boolean
+  showBack?: boolean // 뒤로가기 버튼 표시 여부
   className?: string
   exitMode?: boolean // 나가기 모드 (아이콘 변경)
   exitTitle?: string // 나가기 버튼 제목
@@ -16,6 +17,7 @@ const NavigationButtons = ({
   onBack, 
   backPath, 
   showHome = true,
+  showBack = true,
   className = '',
   exitMode = false,
   exitTitle = '나가기'
@@ -43,17 +45,18 @@ const NavigationButtons = ({
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>
-      <motion.button
-        whileHover={{ scale: 1.1 }}
-        whileTap={{ scale: 0.9 }}
-        onClick={handleBack}
-        className={`w-10 h-10 rounded-full backdrop-blur-sm flex items-center justify-center transition-all shadow-lg ${
-          exitMode 
-            ? 'bg-red-500/80 hover:bg-red-600/80' 
-            : 'bg-gray-700/80 hover:bg-gray-600/80'
-        }`}
-        title={exitTitle}
-      >
+      {showBack && (
+        <motion.button
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
+          onClick={handleBack}
+          className={`w-10 h-10 rounded-full backdrop-blur-sm flex items-center justify-center transition-all shadow-lg ${
+            exitMode 
+              ? 'bg-red-500/80 hover:bg-red-600/80' 
+              : 'bg-gray-700/80 hover:bg-gray-600/80'
+          }`}
+          title={exitTitle}
+        >
         {exitMode ? (
           // 나가기 아이콘 (문 아이콘)
           <svg 
@@ -85,7 +88,8 @@ const NavigationButtons = ({
             />
           </svg>
         )}
-      </motion.button>
+        </motion.button>
+      )}
       
       {showHome && (
         <motion.button

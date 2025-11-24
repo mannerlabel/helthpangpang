@@ -209,7 +209,7 @@ const AdminDashboardPage = () => {
     const user = authService.getCurrentUser()
     if (!user || !adminService.isAdmin(user)) {
       alert('관리자 권한이 필요합니다.')
-      navigate('/home')
+      navigate('/login')
       return
     }
 
@@ -1171,7 +1171,7 @@ const AdminDashboardPage = () => {
     <div className="min-h-screen p-8 overflow-hidden relative">
       <AnimatedBackground />
       <div className="relative z-10 max-w-7xl mx-auto">
-        <NavigationButtons />
+        <NavigationButtons showBack={false} />
 
         <motion.div
           initial={{ opacity: 0, y: 20 }}

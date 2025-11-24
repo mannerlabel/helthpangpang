@@ -301,32 +301,52 @@ const TrainingPage = () => {
   useEffect(() => {
     if (alarm && alarm.enabled) {
       const alarmId = `alarm_${Date.now()}`
-      alarmService.setAlarm(
-        alarmId,
-        alarm,
-        config,
-        (message, type) => {
-          setAlarmNotification({ message, type })
-          // 5초 후 알림 자동 닫기 (start 타입 제외)
-          if (type !== 'start') {
-            setTimeout(() => setAlarmNotification(null), 5000)
-          } else {
-            setShowStartDialog(true)
+      
+      // 크루 이름 가져오기
+      const loadCrewName = async () => {
+        if (mode === 'crew' && crewId) {
+          try {
+            const crew = await databaseService.getCrewById(crewId)
+            return crew?.name
+          } catch (error) {
+            console.error('크루 이름 로드 실패:', error)
+            return undefined
           }
-        },
-        () => {
-          // 운동 시작
-          setShowStartDialog(false)
-          setAlarmNotification(null)
-          // 운동 시작 로직은 이미 구현되어 있음
         }
-      )
+        return undefined
+      }
+      
+      loadCrewName().then((crewName) => {
+        alarmService.setAlarm(
+          alarmId,
+          alarm,
+          config,
+          (message, type) => {
+            // 알람 알림 시 딩동 사운드 출력
+            audioService.playCountSound(1)
+            setAlarmNotification({ message, type })
+            // 5초 후 알림 자동 닫기 (start 타입 제외)
+            if (type !== 'start') {
+              setTimeout(() => setAlarmNotification(null), 5000)
+            } else {
+              setShowStartDialog(true)
+            }
+          },
+          () => {
+            // 운동 시작
+            setShowStartDialog(false)
+            setAlarmNotification(null)
+            // 운동 시작 로직은 이미 구현되어 있음
+          },
+          crewName
+        )
+      })
 
       return () => {
         alarmService.clearAlarm(alarmId)
       }
     }
-  }, [alarm, config])
+  }, [alarm, config, mode, crewId])
 
   // 설정 불러오기 (로컬 스토리지에서)
   useEffect(() => {
@@ -1470,32 +1490,34 @@ const TrainingPage = () => {
             exitMode={true}
             exitTitle="나가기"
             onBack={() => {
-              // 나가기 시 모든 오디오 즉시 정지 (동기적으로)
-              audioService.stopAll()
-              // 추가 안전장치: 강제로 모든 Howl 인스턴스 정지
-              if (typeof window !== 'undefined' && (window as any).Howl) {
-                // Howl의 모든 재생 중인 사운드 강제 정지
-                try {
-                  const howlInstances = (window as any).Howl._howls || []
-                  howlInstances.forEach((howl: any) => {
-                    if (howl && typeof howl.stop === 'function') {
-                      howl.stop()
-                      if (typeof howl.unload === 'function') {
-                        howl.unload()
+              if (window.confirm('운동을 종료하고 나가시겠습니까?')) {
+                // 나가기 시 모든 오디오 즉시 정지 (동기적으로)
+                audioService.stopAll()
+                // 추가 안전장치: 강제로 모든 Howl 인스턴스 정지
+                if (typeof window !== 'undefined' && (window as any).Howl) {
+                  // Howl의 모든 재생 중인 사운드 강제 정지
+                  try {
+                    const howlInstances = (window as any).Howl._howls || []
+                    howlInstances.forEach((howl: any) => {
+                      if (howl && typeof howl.stop === 'function') {
+                        howl.stop()
+                        if (typeof howl.unload === 'function') {
+                          howl.unload()
+                        }
                       }
-                    }
-                  })
-                } catch (e) {
-                  console.warn('Howl 인스턴스 정지 중 오류:', e)
+                    })
+                  } catch (e) {
+                    console.warn('Howl 인스턴스 정지 중 오류:', e)
+                  }
                 }
-              }
-              // 모드에 따라 이전 화면으로 이동
-              if (mode === 'single') {
-                navigate('/single')
-              } else if (mode === 'crew') {
-                navigate('/crew/my-crews')
-              } else {
-                navigate('/mode-select')
+                // 모드에 따라 이전 화면으로 이동
+                if (mode === 'single') {
+                  navigate('/single')
+                } else if (mode === 'crew') {
+                  navigate('/crew/my-crews')
+                } else {
+                  navigate('/mode-select')
+                }
               }
             }}
           />

@@ -72,6 +72,152 @@ const JoggingPage = () => {
     }
   }, [isTracking])
 
+  // 조깅 크루 모드: 활성 세션 등록/해제 (localStorage + Supabase)
+  useEffect(() => {
+    if (config?.mode === 'together' && crewId) {
+      const user = authService.getCurrentUser()
+      if (!user) return
+
+      // localStorage에 활성 세션 등록
+      const registerLocalSession = () => {
+        try {
+          const activeSessions = JSON.parse(localStorage.getItem('active_training_sessions') || '[]')
+          const sessionExists = activeSessions.some(
+            (s: { userId: string; crewId: string }) => s.userId === user.id && s.crewId === crewId
+          )
+          if (!sessionExists) {
+            activeSessions.push({ userId: user.id, crewId, timestamp: Date.now() })
+            localStorage.setItem('active_training_sessions', JSON.stringify(activeSessions))
+          } else {
+            // 타임스탬프 업데이트
+            const sessionIndex = activeSessions.findIndex(
+              (s: { userId: string; crewId: string }) => s.userId === user.id && s.crewId === crewId
+            )
+            if (sessionIndex !== -1) {
+              activeSessions[sessionIndex].timestamp = Date.now()
+              localStorage.setItem('active_training_sessions', JSON.stringify(activeSessions))
+            }
+          }
+        } catch (e) {
+          console.error('활성 세션 등록 실패:', e)
+        }
+      }
+
+      // Supabase에 활성 세션 업데이트 (jogging_crew_members 테이블이 있다면)
+      const updateSupabaseActivity = async () => {
+        try {
+          const { supabase } = await import('@/services/supabaseClient')
+          if (supabase) {
+            // UUID 매핑
+            let supabaseUserId = user.id
+            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+            if (!uuidRegex.test(user.id)) {
+              const userStr = localStorage.getItem(`user_${user.id}`)
+              if (userStr) {
+                const userData = JSON.parse(userStr)
+                if (userData.email) {
+                  const { data: supabaseUser } = await supabase
+                    .from('users')
+                    .select('id')
+                    .eq('email', userData.email)
+                    .single()
+                  
+                  if (supabaseUser) {
+                    supabaseUserId = supabaseUser.id
+                  }
+                }
+              }
+            }
+
+            // jogging_crew_members 테이블이 있다면 업데이트
+            // 없으면 무시 (에러 발생 시 무시)
+            try {
+              await supabase
+                .from('jogging_crew_members')
+                .update({ 
+                  video_enabled: true,
+                  audio_enabled: myAudioEnabled,
+                })
+                .eq('crew_id', crewId)
+                .eq('user_id', supabaseUserId)
+            } catch (e) {
+              // 테이블이 없으면 무시
+              console.log('jogging_crew_members 테이블이 없거나 업데이트 실패 (무시):', e)
+            }
+          }
+        } catch (e) {
+          console.error('Supabase 활성 세션 업데이트 실패:', e)
+        }
+      }
+
+      registerLocalSession()
+      updateSupabaseActivity()
+
+      // 주기적으로 활성 상태 업데이트 (5초마다)
+      const interval = setInterval(() => {
+        registerLocalSession()
+        updateSupabaseActivity()
+      }, 5000)
+
+      // 컴포넌트 언마운트 시 활성 세션 제거
+      return () => {
+        clearInterval(interval)
+        try {
+          const activeSessions = JSON.parse(localStorage.getItem('active_training_sessions') || '[]')
+          const filtered = activeSessions.filter(
+            (s: { userId: string; crewId: string }) => !(s.userId === user.id && s.crewId === crewId)
+          )
+          localStorage.setItem('active_training_sessions', JSON.stringify(filtered))
+          
+          // Supabase에서도 비활성 상태로 설정
+          ;(async () => {
+            try {
+              const { supabase } = await import('@/services/supabaseClient')
+              if (supabase) {
+                let supabaseUserId = user.id
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+                if (!uuidRegex.test(user.id)) {
+                  const userStr = localStorage.getItem(`user_${user.id}`)
+                  if (userStr) {
+                    const userData = JSON.parse(userStr)
+                    if (userData.email) {
+                      const { data: supabaseUser } = await supabase
+                        .from('users')
+                        .select('id')
+                        .eq('email', userData.email)
+                        .single()
+                      
+                      if (supabaseUser) {
+                        supabaseUserId = supabaseUser.id
+                      }
+                    }
+                  }
+                }
+                
+                try {
+                  await supabase
+                    .from('jogging_crew_members')
+                    .update({ 
+                      video_enabled: false,
+                      audio_enabled: false,
+                    })
+                    .eq('crew_id', crewId)
+                    .eq('user_id', supabaseUserId)
+                } catch (e) {
+                  // 테이블이 없으면 무시
+                }
+              }
+            } catch (e) {
+              // 무시
+            }
+          })()
+        } catch (e) {
+          console.error('활성 세션 제거 실패:', e)
+        }
+      }
+    }
+  }, [config?.mode, crewId, myAudioEnabled])
+
   // 조깅 크루 정보 및 추천 상태 로드
   useEffect(() => {
     if (config?.mode === 'together' && crewId) {
@@ -244,18 +390,9 @@ const JoggingPage = () => {
           조깅 모드 🏃 {config?.mode === 'together' && '(함께)'}
         </h1>
           <NavigationButtons 
-            exitMode={true}
-            exitTitle="나가기"
-            onBack={() => {
-              // 모드에 따라 이전 화면으로 이동
-              if (config?.mode === 'alone') {
-                navigate('/jogging-alone')
-              } else if (config?.mode === 'together') {
-                navigate('/jogging-crew/my-crews')
-              } else {
-                navigate('/jogging-mode-select')
-              }
-            }}
+            showBack={true}
+            showHome={true}
+            backPath={config?.mode === 'alone' ? '/jogging-alone' : config?.mode === 'together' ? '/jogging-crew/my-crews' : '/jogging-mode-select'}
           />
         </div>
         
@@ -582,6 +719,7 @@ const JoggingPage = () => {
               myStatus={isTracking ? 'active' : 'inactive'}
               onHeightChange={setMeetingViewHeight}
               onEntryMessage={setEntryMessage}
+              crewType="jogging"
             />
           </div>
         )}

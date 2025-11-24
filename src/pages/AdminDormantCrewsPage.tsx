@@ -21,7 +21,7 @@ const AdminDormantCrewsPage = () => {
     const user = authService.getCurrentUser()
     if (!user || !adminService.isAdmin(user)) {
       alert('관리자 권한이 필요합니다.')
-      navigate('/home')
+      navigate('/login')
       return
     }
 

@@ -2,7 +2,7 @@ import { AlarmConfig } from '@/types'
 
 /**
  * 예약 알림 서비스
- * 1시간 전, 10분 전, 1분 전 알림 및 예약 시간 알림 처리
+ * 1시간 전, 15분 전 알림 및 예약 시간 알림 처리
  */
 class AlarmService {
   private alarms: Map<string, NodeJS.Timeout> = new Map()
@@ -16,7 +16,8 @@ class AlarmService {
     alarmConfig: AlarmConfig,
     exerciseConfig: any,
     onNotify: (message: string, type: 'info' | 'warning' | 'start') => void,
-    onStart: () => void
+    onStart: () => void,
+    crewName?: string
   ): void {
     // 기존 알람 제거
     this.clearAlarm(id)
@@ -45,27 +46,22 @@ class AlarmService {
     const oneHourBefore = timeUntilAlarm - 3600000
     if (oneHourBefore > 0) {
       const timeout1 = setTimeout(() => {
-        onNotify('운동 예약 시간까지 1시간 남았습니다!', 'info')
+        const roomName = crewName || '운동'
+        const message = `${roomName}방에서의 알림메세지 : 1시간 전 입니다. 오늘도 화이팅하세요.!`
+        onNotify(message, 'info')
       }, oneHourBefore)
       this.alarms.set(`${id}_1h`, timeout1)
     }
 
-    // 10분 전 알림 (600000ms = 10분)
-    const tenMinutesBefore = timeUntilAlarm - 600000
-    if (tenMinutesBefore > 0) {
+    // 15분 전 알림 (900000ms = 15분)
+    const fifteenMinutesBefore = timeUntilAlarm - 900000
+    if (fifteenMinutesBefore > 0) {
       const timeout2 = setTimeout(() => {
-        onNotify('운동 예약 시간까지 10분 남았습니다!', 'warning')
-      }, tenMinutesBefore)
-      this.alarms.set(`${id}_10m`, timeout2)
-    }
-
-    // 1분 전 알림 (60000ms = 1분)
-    const oneMinuteBefore = timeUntilAlarm - 60000
-    if (oneMinuteBefore > 0) {
-      const timeout3 = setTimeout(() => {
-        onNotify('운동 예약 시간까지 1분 남았습니다!', 'warning')
-      }, oneMinuteBefore)
-      this.alarms.set(`${id}_1m`, timeout3)
+        const roomName = crewName || '운동'
+        const message = `${roomName}방에서의 알림메세지 : 15분 전 입니다. 오늘도 화이팅하세요.!`
+        onNotify(message, 'warning')
+      }, fifteenMinutesBefore)
+      this.alarms.set(`${id}_15m`, timeout2)
     }
 
     // 예약 시간 알림
@@ -80,13 +76,13 @@ class AlarmService {
     // 반복 설정 처리
     if (alarmConfig.repeatType === 'daily') {
       // 매일 반복
-      this.scheduleDailyRepeat(id, alarmConfig, exerciseConfig, onNotify, onStart)
+      this.scheduleDailyRepeat(id, alarmConfig, exerciseConfig, onNotify, onStart, crewName)
     } else if (alarmConfig.repeatType === 'weekly') {
       // 매주 반복
-      this.scheduleWeeklyRepeat(id, alarmConfig, exerciseConfig, onNotify, onStart)
+      this.scheduleWeeklyRepeat(id, alarmConfig, exerciseConfig, onNotify, onStart, crewName)
     } else if (alarmConfig.repeatType === 'custom' && alarmConfig.repeatDays) {
       // 사용자 지정 요일 반복
-      this.scheduleCustomRepeat(id, alarmConfig, exerciseConfig, onNotify, onStart)
+      this.scheduleCustomRepeat(id, alarmConfig, exerciseConfig, onNotify, onStart, crewName)
     }
   }
 
@@ -98,7 +94,8 @@ class AlarmService {
     alarmConfig: AlarmConfig,
     exerciseConfig: any,
     onNotify: (message: string, type: 'info' | 'warning' | 'start') => void,
-    onStart: () => void
+    onStart: () => void,
+    crewName?: string
   ): void {
     // 다음 날 같은 시간에 알람 설정
     const nextDay = new Date()
@@ -107,7 +104,7 @@ class AlarmService {
     nextDay.setHours(hours, minutes, 0, 0)
 
     const timeout = setTimeout(() => {
-      this.setAlarm(`${id}_repeat`, alarmConfig, exerciseConfig, onNotify, onStart)
+      this.setAlarm(`${id}_repeat`, alarmConfig, exerciseConfig, onNotify, onStart, crewName)
     }, nextDay.getTime() - Date.now())
 
     this.alarms.set(`${id}_repeat`, timeout)
@@ -121,7 +118,8 @@ class AlarmService {
     alarmConfig: AlarmConfig,
     exerciseConfig: any,
     onNotify: (message: string, type: 'info' | 'warning' | 'start') => void,
-    onStart: () => void
+    onStart: () => void,
+    crewName?: string
   ): void {
     // 다음 주 같은 요일 같은 시간에 알람 설정
     const nextWeek = new Date()
@@ -130,7 +128,7 @@ class AlarmService {
     nextWeek.setHours(hours, minutes, 0, 0)
 
     const timeout = setTimeout(() => {
-      this.setAlarm(`${id}_repeat`, alarmConfig, exerciseConfig, onNotify, onStart)
+      this.setAlarm(`${id}_repeat`, alarmConfig, exerciseConfig, onNotify, onStart, crewName)
     }, nextWeek.getTime() - Date.now())
 
     this.alarms.set(`${id}_repeat`, timeout)
@@ -144,7 +142,8 @@ class AlarmService {
     alarmConfig: AlarmConfig,
     exerciseConfig: any,
     onNotify: (message: string, type: 'info' | 'warning' | 'start') => void,
-    onStart: () => void
+    onStart: () => void,
+    crewName?: string
   ): void {
     if (!alarmConfig.repeatDays || alarmConfig.repeatDays.length === 0) {
       return
@@ -168,7 +167,7 @@ class AlarmService {
     nextDay.setHours(hours, minutes, 0, 0)
 
     const timeout = setTimeout(() => {
-      this.setAlarm(`${id}_repeat`, alarmConfig, exerciseConfig, onNotify, onStart)
+      this.setAlarm(`${id}_repeat`, alarmConfig, exerciseConfig, onNotify, onStart, crewName)
     }, nextDay.getTime() - Date.now())
 
     this.alarms.set(`${id}_repeat`, timeout)

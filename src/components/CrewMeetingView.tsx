@@ -25,11 +25,12 @@ interface CrewMeetingViewProps {
   myAudioEnabled: boolean
   onVideoToggle: (enabled: boolean) => void
   onAudioToggle: (enabled: boolean) => void
-  myStatus: 'active' | 'completed' | 'resting'
+  myStatus: 'active' | 'completed' | 'resting' | 'inactive'
   myScore?: number
   myCurrentCount?: number
   onHeightChange?: (height: number) => void // 높이 변경 콜백
   onEntryMessage?: (message: string) => void // 입장 메시지 콜백 (데이터베이스에 저장하지 않음)
+  crewType?: 'crew' | 'jogging' // 크루 타입 (기본값: 'crew')
 }
 
 const CrewMeetingView = ({
@@ -43,6 +44,7 @@ const CrewMeetingView = ({
   myCurrentCount,
   onHeightChange,
   onEntryMessage,
+  crewType = 'crew',
 }: CrewMeetingViewProps) => {
   const [participants, setParticipants] = useState<Participant[]>([])
   const [myVideoStream, setMyVideoStream] = useState<MediaStream | null>(null)
@@ -119,7 +121,29 @@ const CrewMeetingView = ({
       const user = authService.getCurrentUser()
       if (!user) return
 
-      const members = await databaseService.getCrewMembers(crewId)
+      let members: CrewMember[] = []
+      
+      // 조깅 크루인 경우 다른 방식으로 멤버 로드
+      if (crewType === 'jogging') {
+        try {
+          const joggingCrew = await databaseService.getJoggingCrewById(crewId)
+          if (joggingCrew && joggingCrew.memberIds) {
+            // memberIds를 사용하여 CrewMember 형태로 변환
+            members = joggingCrew.memberIds.map((memberId, index) => ({
+              id: `jogging_member_${memberId}_${index}`,
+              crewId: crewId,
+              userId: memberId,
+              videoEnabled: false,
+              audioEnabled: false,
+              joinedAt: joggingCrew.createdAt,
+            }))
+          }
+        } catch (error) {
+          console.error('조깅 크루 멤버 로드 실패:', error)
+        }
+      } else {
+        members = await databaseService.getCrewMembers(crewId)
+      }
       
       // 활성 사용자 ID 수집 (localStorage + Supabase)
       const activeUserIds = new Set<string>()
@@ -149,9 +173,10 @@ const CrewMeetingView = ({
       try {
         const { supabase } = await import('@/services/supabaseClient')
         if (supabase) {
-          // crew_members 테이블에서 해당 크루의 모든 멤버 조회
+          // crew_members 또는 jogging_crew_members 테이블에서 해당 크루의 모든 멤버 조회
+          const tableName = crewType === 'jogging' ? 'jogging_crew_members' : 'crew_members'
           const { data: allMembers, error } = await supabase
-            .from('crew_members')
+            .from(tableName)
             .select('user_id, video_enabled, audio_enabled')
             .eq('crew_id', crewId)
           

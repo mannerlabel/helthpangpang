@@ -33,7 +33,12 @@ const AnnouncementsPage = () => {
       if (reset) {
         setAnnouncements(result.data)
       } else {
-        setAnnouncements(prev => [...prev, ...result.data])
+        // 중복 제거: 기존 배열에 없는 공지사항만 추가
+        setAnnouncements(prev => {
+          const existingIds = new Set(prev.map(a => a.id))
+          const newAnnouncements = result.data.filter(a => !existingIds.has(a.id))
+          return [...prev, ...newAnnouncements]
+        })
       }
       
       setPagination({ 
@@ -96,7 +101,7 @@ const AnnouncementsPage = () => {
       <div className="max-w-4xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-4xl font-bold text-white">📢 공지사항</h1>
-          <NavigationButtons backPath="/home" showHome={true} />
+          <NavigationButtons showHome={true} />
         </div>
 
         {/* 공지사항 목록 */}
