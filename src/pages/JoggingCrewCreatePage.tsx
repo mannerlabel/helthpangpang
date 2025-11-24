@@ -47,8 +47,8 @@ const JoggingCrewCreatePage = () => {
           const user = authService.getCurrentUser()
           if (!user) return
           
-          const crews = await databaseService.getJoggingCrewsByUserId(user.id)
-          const foundCrew = crews.find((c: JoggingCrew) => c.id === crewId)
+          const crewsResult = await databaseService.getJoggingCrewsByUserId(user.id, 1000, 0)
+          const foundCrew = crewsResult.data.find((c: JoggingCrew) => c.id === crewId)
           
           if (foundCrew) {
             targetCrew = foundCrew

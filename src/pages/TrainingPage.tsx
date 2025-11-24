@@ -26,6 +26,7 @@ import { getVersion } from '@/utils/version'
 import { alarmService } from '@/services/alarmService'
 import { databaseService } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { adminService } from '@/services/adminService'
 
 // 숫자를 한국어로 변환 (하나, 둘, 셋...)
 const convertToKorean = (num: number): string => {
@@ -74,6 +75,15 @@ const TrainingPage = () => {
   const [startCountdown, setStartCountdown] = useState<number | null>(null) // 시작 카운트다운 (10초)
   const [totalCount, setTotalCount] = useState(0) // 전체 카운트 (모든 세트 합계)
   const hasStartedRef = useRef(false) // 운동이 시작되었는지 추적 (리렌더링과 무관)
+  
+  // 관리자는 이 페이지에 접근할 수 없음
+  useEffect(() => {
+    const user = authService.getCurrentUser()
+    if (user && adminService.isAdmin(user)) {
+      alert('관리자는 일반 사용자 모드를 사용할 수 없습니다.')
+      navigate('/admin/dashboard')
+    }
+  }, [navigate])
   
   // 크루 모드 관련 상태
   const [myVideoEnabled, setMyVideoEnabled] = useState(false)

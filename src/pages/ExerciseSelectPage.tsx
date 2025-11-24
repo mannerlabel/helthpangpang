@@ -1,15 +1,26 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { AppMode, ExerciseType, ExerciseConfig, AlarmConfig } from '@/types'
 import { EXERCISE_TYPES, EXERCISE_TYPE_DETAILS } from '@/constants/exerciseTypes'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import NavigationButtons from '@/components/NavigationButtons'
+import { authService } from '@/services/authService'
+import { adminService } from '@/services/adminService'
 
 const ExerciseSelectPage = () => {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const mode = (searchParams.get('mode') || 'single') as AppMode
+
+  // 관리자는 이 페이지에 접근할 수 없음
+  useEffect(() => {
+    const user = authService.getCurrentUser()
+    if (user && adminService.isAdmin(user)) {
+      alert('관리자는 일반 사용자 모드를 사용할 수 없습니다.')
+      navigate('/admin/dashboard')
+    }
+  }, [navigate])
 
   const [selectedExercise, setSelectedExercise] = useState<ExerciseType>(EXERCISE_TYPES.SQUAT)
   const [sets, setSets] = useState(2)

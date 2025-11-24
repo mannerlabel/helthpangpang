@@ -1,12 +1,23 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { JoggingMode } from '@/types'
 import NavigationButtons from '@/components/NavigationButtons'
+import { authService } from '@/services/authService'
+import { adminService } from '@/services/adminService'
 
 const JoggingModeSelectPage = () => {
   const navigate = useNavigate()
   const [selectedMode, setSelectedMode] = useState<JoggingMode | null>(null)
+
+  // 관리자는 이 페이지에 접근할 수 없음
+  useEffect(() => {
+    const user = authService.getCurrentUser()
+    if (user && adminService.isAdmin(user)) {
+      alert('관리자는 일반 사용자 모드를 사용할 수 없습니다.')
+      navigate('/admin/dashboard')
+    }
+  }, [navigate])
 
   const handleModeSelect = (mode: JoggingMode) => {
     setSelectedMode(mode)

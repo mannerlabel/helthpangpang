@@ -5,6 +5,7 @@ import { ExerciseSession, AIAnalysis } from '@/types'
 import { aiAnalysisService } from '@/services/aiAnalysisService'
 import { databaseService } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { adminService } from '@/services/adminService'
 import { imageCaptureService } from '@/services/imageCaptureService'
 import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 
@@ -81,7 +82,12 @@ const ResultPage = () => {
 
   useEffect(() => {
     if (!session) {
-      navigate('/mode-select')
+      const user = authService.getCurrentUser()
+      if (user && adminService.isAdmin(user)) {
+        navigate('/admin/dashboard')
+      } else {
+        navigate('/mode-select')
+      }
       return
     }
 
@@ -641,7 +647,14 @@ const ResultPage = () => {
                 다시 시작
               </button>
               <button
-                onClick={() => navigate('/mode-select')}
+                onClick={() => {
+                  const user = authService.getCurrentUser()
+                  if (user && adminService.isAdmin(user)) {
+                    navigate('/admin/dashboard')
+                  } else {
+                    navigate('/mode-select')
+                  }
+                }}
                 className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition"
               >
                 홈으로
@@ -693,7 +706,14 @@ const ResultPage = () => {
                 다시 시작
               </button>
               <button
-                onClick={() => navigate('/mode-select')}
+                onClick={() => {
+                  const user = authService.getCurrentUser()
+                  if (user && adminService.isAdmin(user)) {
+                    navigate('/admin/dashboard')
+                  } else {
+                    navigate('/mode-select')
+                  }
+                }}
                 className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition"
               >
                 홈으로

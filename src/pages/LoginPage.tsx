@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { authService } from '@/services/authService'
+import { adminService } from '@/services/adminService'
 
 const LoginPage = () => {
   const navigate = useNavigate()
@@ -13,6 +14,9 @@ const LoginPage = () => {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // 관리자 계정 여부 확인 (vine.admin으로 시작하는 경우)
+  const isAdminAccount = email === 'vine.admin' || email.startsWith('vine.admin')
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
@@ -22,7 +26,12 @@ const LoginPage = () => {
       if (isLogin) {
         const result = await authService.login(email, password)
         if (result.success && result.user) {
-          navigate('/mode-select')
+          // 관리자 계정이면 대시보드로, 일반 사용자는 모드 선택으로
+          if (adminService.isAdmin(result.user)) {
+            navigate('/admin/dashboard')
+          } else {
+            navigate('/mode-select')
+          }
         } else {
           setError(result.error || '로그인에 실패했습니다.')
         }
@@ -81,10 +90,10 @@ const LoginPage = () => {
 
             <div>
               <label className="block text-white text-sm font-semibold mb-2">
-                이메일
+                이메일 {isAdminAccount && <span className="text-xs text-gray-500">(관리자 계정)</span>}
               </label>
               <input
-                type="email"
+                type={isAdminAccount ? 'text' : 'email'}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="이메일을 입력하세요"

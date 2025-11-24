@@ -1,5 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { authService } from '@/services/authService'
+import { adminService } from '@/services/adminService'
 
 interface NavigationButtonsProps {
   onBack?: () => void
@@ -31,7 +33,12 @@ const NavigationButtons = ({
   }
 
   const handleHome = () => {
-    navigate('/mode-select')
+    const user = authService.getCurrentUser()
+    if (user && adminService.isAdmin(user)) {
+      navigate('/admin/dashboard')
+    } else {
+      navigate('/mode-select')
+    }
   }
 
   return (

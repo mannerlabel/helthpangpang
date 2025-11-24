@@ -6,13 +6,16 @@ import NavigationButtons from '@/components/NavigationButtons'
 import { JoggingGoal, JoggingConfig, WeatherInfo } from '@/types'
 import { databaseService } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
 
 const JoggingAlonePage = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const [goals, setGoals] = useState<JoggingGoal[]>([])
+  const [pagination, setPagination] = useState({ offset: 0, hasMore: true, loading: false })
+  const PAGE_SIZE = 20
 
-  const loadGoals = async () => {
+  const loadGoals = async (reset: boolean = false) => {
     try {
       const user = authService.getCurrentUser()
       if (!user) {
@@ -20,8 +23,26 @@ const JoggingAlonePage = () => {
         return
       }
       
-      const goals = await databaseService.getJoggingGoalsByUserId(user.id)
-      setGoals(goals)
+      const offset = reset ? 0 : pagination.offset
+      if (reset) {
+        setPagination({ offset: 0, hasMore: true, loading: true })
+        setGoals([])
+      } else {
+        setPagination(prev => ({ ...prev, loading: true }))
+      }
+      
+      const result = await databaseService.getJoggingGoalsByUserId(user.id, PAGE_SIZE, offset)
+      if (reset) {
+        setGoals(result.data)
+      } else {
+        setGoals(prev => [...prev, ...result.data])
+      }
+      
+      setPagination({ 
+        offset: offset + PAGE_SIZE, 
+        hasMore: result.hasMore, 
+        loading: false 
+      })
     } catch (error) {
       console.error('목표 목록 로드 실패:', error)
       setGoals([])
@@ -29,13 +50,26 @@ const JoggingAlonePage = () => {
   }
 
   useEffect(() => {
-    loadGoals()
+    loadGoals(true)
   }, [navigate])
 
   // location이 변경될 때마다 목록 다시 로드 (생성/수정 후 돌아올 때)
   useEffect(() => {
-    loadGoals()
+    loadGoals(true)
   }, [location.key])
+
+  // 더 불러오기 (무한 스크롤)
+  const loadMoreGoals = async () => {
+    if (pagination.loading || !pagination.hasMore) return
+    await loadGoals(false)
+  }
+
+  // 무한 스크롤 훅
+  const { elementRef } = useInfiniteScroll({
+    hasMore: pagination.hasMore,
+    loading: pagination.loading,
+    onLoadMore: loadMoreGoals,
+  })
 
   const formatAlarmInfo = (alarm?: { time: string; repeatType: string }): string => {
     if (!alarm) return '알람 없음'
@@ -228,6 +262,15 @@ const JoggingAlonePage = () => {
                 </div>
               </motion.div>
             ))}
+            
+            {/* 무한 스크롤 트리거 */}
+            {pagination.hasMore && (
+              <div ref={elementRef} className="py-4 text-center">
+                {pagination.loading && (
+                  <div className="text-gray-400">로딩 중...</div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

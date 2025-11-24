@@ -5,6 +5,7 @@ import AnimatedBackground from '@/components/AnimatedBackground'
 import NavigationButtons from '@/components/NavigationButtons'
 import { databaseService, JoggingCrew } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
 
 const JoggingCrewListPage = () => {
   const navigate = useNavigate()
@@ -15,29 +16,43 @@ const JoggingCrewListPage = () => {
   const [hasRecommendedMap, setHasRecommendedMap] = useState<Record<string, boolean>>({})
   const [hasCancelledMap, setHasCancelledMap] = useState<Record<string, boolean>>({})
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({})
+  const [pagination, setPagination] = useState({ offset: 0, hasMore: true, loading: false })
+  const PAGE_SIZE = 20
 
   useEffect(() => {
-    loadMyCrews()
+    loadMyCrews(true)
   }, [])
 
   // location이 변경될 때마다 목록 다시 로드 (생성/수정 후 돌아올 때)
   useEffect(() => {
-    loadMyCrews()
+    loadMyCrews(true)
   }, [location.key])
 
-  const loadMyCrews = async () => {
+  const loadMyCrews = async (reset: boolean = false) => {
     const user = authService.getCurrentUser()
     if (!user) return
 
     try {
-      const crews = await databaseService.getJoggingCrewsByUserId(user.id)
-      setMyCrews(crews)
+      const offset = reset ? 0 : pagination.offset
+      if (reset) {
+        setPagination({ offset: 0, hasMore: true, loading: true })
+        setMyCrews([])
+      } else {
+        setPagination(prev => ({ ...prev, loading: true }))
+      }
+      
+      const result = await databaseService.getJoggingCrewsByUserId(user.id, PAGE_SIZE, offset)
+      if (reset) {
+        setMyCrews(result.data)
+      } else {
+        setMyCrews(prev => [...prev, ...result.data])
+      }
       
       // 각 크루에 대해 추천 여부 확인 및 생성자 정보 가져오기
       const recommendedMap: Record<string, boolean> = {}
       const cancelledMap: Record<string, boolean> = {}
       const creatorNameMap: Record<string, string> = {}
-      for (const crew of crews) {
+      for (const crew of result.data) {
         const hasRecommended = await databaseService.hasUserRecommendedJoggingCrew(crew.id, user.id)
         const hasCancelled = await databaseService.hasUserCancelledJoggingCrewRecommendation(crew.id, user.id)
         recommendedMap[crew.id] = hasRecommended
@@ -53,13 +68,39 @@ const JoggingCrewListPage = () => {
           console.error(`조깅 크루 ${crew.id}의 생성자 정보 가져오기 실패:`, error)
         }
       }
-      setHasRecommendedMap(recommendedMap)
-      setHasCancelledMap(cancelledMap)
-      setCreatorMap(creatorNameMap)
+      if (reset) {
+        setHasRecommendedMap(recommendedMap)
+        setHasCancelledMap(cancelledMap)
+        setCreatorMap(creatorNameMap)
+      } else {
+        setHasRecommendedMap(prev => ({ ...prev, ...recommendedMap }))
+        setHasCancelledMap(prev => ({ ...prev, ...cancelledMap }))
+        setCreatorMap(prev => ({ ...prev, ...creatorNameMap }))
+      }
+      
+      setPagination({ 
+        offset: offset + PAGE_SIZE, 
+        hasMore: result.hasMore, 
+        loading: false 
+      })
     } catch (error) {
       console.error('조깅 크루 목록 로드 실패:', error)
+      setPagination(prev => ({ ...prev, loading: false }))
     }
   }
+
+  // 더 불러오기 (무한 스크롤)
+  const loadMoreCrews = async () => {
+    if (pagination.loading || !pagination.hasMore) return
+    await loadMyCrews(false)
+  }
+
+  // 무한 스크롤 훅
+  const { elementRef } = useInfiniteScroll({
+    hasMore: pagination.hasMore,
+    loading: pagination.loading,
+    onLoadMore: loadMoreCrews,
+  })
 
   // 정렬 적용
   useEffect(() => {
@@ -391,6 +432,15 @@ const JoggingCrewListPage = () => {
                 </div>
               </motion.div>
             ))}
+            
+            {/* 무한 스크롤 트리거 */}
+            {pagination.hasMore && (
+              <div ref={elementRef} className="py-4 text-center">
+                {pagination.loading && (
+                  <div className="text-gray-400">로딩 중...</div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -399,4 +449,5 @@ const JoggingCrewListPage = () => {
 }
 
 export default JoggingCrewListPage
+
 

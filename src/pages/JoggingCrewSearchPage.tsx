@@ -5,6 +5,7 @@ import AnimatedBackground from '@/components/AnimatedBackground'
 import NavigationButtons from '@/components/NavigationButtons'
 import { databaseService, JoggingCrew } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
 
 const JoggingCrewSearchPage = () => {
   const navigate = useNavigate()
@@ -15,31 +16,53 @@ const JoggingCrewSearchPage = () => {
   const [hasRecommendedMap, setHasRecommendedMap] = useState<Record<string, boolean>>({})
   const [hasCancelledMap, setHasCancelledMap] = useState<Record<string, boolean>>({})
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({})
+  const [pagination, setPagination] = useState({ offset: 0, hasMore: true, loading: false })
+  const [allCrews, setAllCrews] = useState<JoggingCrew[]>([])
+  const PAGE_SIZE = 20
 
   useEffect(() => {
-    loadCrews()
+    loadCrews(true)
   }, [searchTerm, sortBy])
 
-  const loadCrews = async () => {
+  const loadCrews = async (reset: boolean = false) => {
     try {
-      setLoading(true)
-      // 실제 데이터베이스에서 모든 조깅 크루 가져오기
-      let crews = await databaseService.getAllJoggingCrews()
-      console.log('로드된 조깅 크루 수:', crews.length, crews)
+      if (reset) {
+        setLoading(true)
+        setPagination({ offset: 0, hasMore: true, loading: false })
+        setAllCrews([])
+      }
+      
+      const offset = reset ? 0 : pagination.offset
+      if (!reset) {
+        setPagination(prev => ({ ...prev, loading: true }))
+      }
+      
+      // 실제 데이터베이스에서 조깅 크루 가져오기 (페이지네이션)
+      const result = await databaseService.getAllJoggingCrews(PAGE_SIZE, offset)
+      console.log('로드된 조깅 크루 수:', result.data.length, result.data)
 
       // 사용자가 이미 참여한 크루는 제외
       const user = authService.getCurrentUser()
+      let availableCrews = result.data
       if (user) {
-        const myCrews = await databaseService.getJoggingCrewsByUserId(user.id)
-        const myCrewIds = new Set(myCrews.map((c) => c.id))
-        crews = crews.filter((crew) => !myCrewIds.has(crew.id))
-        console.log('참여한 크루 제외 후:', crews.length)
+        const myCrewsResult = await databaseService.getJoggingCrewsByUserId(user.id, 1000, 0)
+        const myCrewIds = new Set(myCrewsResult.data.map((c) => c.id))
+        availableCrews = result.data.filter((crew) => !myCrewIds.has(crew.id))
+        console.log('참여한 크루 제외 후:', availableCrews.length)
+      }
+      
+      if (reset) {
+        setAllCrews(availableCrews)
+      } else {
+        setAllCrews(prev => [...prev, ...availableCrews])
+      }
 
-        // 각 크루에 대해 추천 여부 확인 및 생성자 정보 가져오기
-        const recommendedMap: Record<string, boolean> = {}
-        const cancelledMap: Record<string, boolean> = {}
-        const creatorNameMap: Record<string, string> = {}
-        for (const crew of crews) {
+      // 각 크루에 대해 추천 여부 확인 및 생성자 정보 가져오기
+      const recommendedMap: Record<string, boolean> = {}
+      const cancelledMap: Record<string, boolean> = {}
+      const creatorNameMap: Record<string, string> = {}
+      if (user) {
+        for (const crew of availableCrews) {
           const hasRecommended = await databaseService.hasUserRecommendedJoggingCrew(crew.id, user.id)
           const hasCancelled = await databaseService.hasUserCancelledJoggingCrewRecommendation(crew.id, user.id)
           recommendedMap[crew.id] = hasRecommended
@@ -55,43 +78,88 @@ const JoggingCrewSearchPage = () => {
             console.error(`조깅 크루 ${crew.id}의 생성자 정보 가져오기 실패:`, error)
           }
         }
+      } else {
+        // 사용자가 없으면 생성자 정보만 가져오기
+        for (const crew of availableCrews) {
+          try {
+            const creator = await databaseService.getUserById(crew.createdBy)
+            if (creator) {
+              creatorNameMap[crew.id] = creator.name
+            }
+          } catch (error) {
+            console.error(`조깅 크루 ${crew.id}의 생성자 정보 가져오기 실패:`, error)
+          }
+        }
+      }
+      if (reset) {
         setHasRecommendedMap(recommendedMap)
         setHasCancelledMap(cancelledMap)
         setCreatorMap(creatorNameMap)
+      } else {
+        setHasRecommendedMap(prev => ({ ...prev, ...recommendedMap }))
+        setHasCancelledMap(prev => ({ ...prev, ...cancelledMap }))
+        setCreatorMap(prev => ({ ...prev, ...creatorNameMap }))
       }
 
-      // 검색 필터링
-      if (searchTerm.trim()) {
-        crews = crews.filter((crew) =>
-          crew.name.toLowerCase().includes(searchTerm.toLowerCase())
-        )
-      }
-
-      // 정렬: 생성일 또는 추천수 기준
-      crews.sort((a, b) => {
-        if (sortBy === 'recommendations') {
-          const aRec = a.recommendations || 0
-          const bRec = b.recommendations || 0
-          if (bRec !== aRec) return bRec - aRec
-          // 추천수가 같으면 생성일 최신순
-          return b.createdAt - a.createdAt
-        } else {
-          // 생성일 최신순
-          return b.createdAt - a.createdAt
-        }
+      setPagination({ 
+        offset: offset + PAGE_SIZE, 
+        hasMore: result.hasMore, 
+        loading: false 
       })
-
-      setFilteredCrews(crews)
-      console.log('최종 필터링된 조깅 크루:', crews.length)
     } catch (error: any) {
       console.error('조깅 크루 목록 로드 실패:', error)
       console.error('에러 상세:', error?.message, error?.code, error?.details, error?.hint)
-      setFilteredCrews([])
+      setAllCrews([])
       alert(`조깅 크루 목록을 불러오는데 실패했습니다: ${error?.message || String(error)}`)
+      setPagination(prev => ({ ...prev, loading: false }))
     } finally {
-      setLoading(false)
+      if (reset) {
+        setLoading(false)
+      }
     }
   }
+
+  // 필터링 및 정렬 적용
+  useEffect(() => {
+    let filtered = [...allCrews]
+
+    // 검색 필터링
+    if (searchTerm.trim()) {
+      filtered = filtered.filter((crew) =>
+        crew.name.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+    }
+
+    // 정렬: 생성일 또는 추천수 기준
+    filtered.sort((a, b) => {
+      if (sortBy === 'recommendations') {
+        const aRec = a.recommendations || 0
+        const bRec = b.recommendations || 0
+        if (bRec !== aRec) return bRec - aRec
+        // 추천수가 같으면 생성일 최신순
+        return b.createdAt - a.createdAt
+      } else {
+        // 생성일 최신순
+        return b.createdAt - a.createdAt
+      }
+    })
+
+    setFilteredCrews(filtered)
+    console.log('최종 필터링된 조깅 크루:', filtered.length)
+  }, [allCrews, searchTerm, sortBy])
+
+  // 더 불러오기 (무한 스크롤)
+  const loadMoreCrews = async () => {
+    if (pagination.loading || !pagination.hasMore) return
+    await loadCrews(false)
+  }
+
+  // 무한 스크롤 훅 (모든 함수 정의 이후에 배치)
+  const { elementRef } = useInfiniteScroll({
+    hasMore: pagination.hasMore,
+    loading: pagination.loading,
+    onLoadMore: loadMoreCrews,
+  })
 
   const formatAlarmTime = (alarm?: { time: string; repeatType: string }): string => {
     if (!alarm) return '알람 없음'
@@ -127,7 +195,7 @@ const JoggingCrewSearchPage = () => {
         const result = await databaseService.joinJoggingCrew(crew.id, user.id)
         if (result) {
           alert('조깅 크루에 참여했습니다!')
-          await loadCrews()
+          await loadCrews(true)
           // 다른 탭/창에 변경사항 알림
           window.dispatchEvent(new Event('storage'))
         } else {
@@ -166,7 +234,7 @@ const JoggingCrewSearchPage = () => {
           const updatedCrew = await databaseService.getJoggingCrewById(crew.id)
           if (updatedCrew) {
             // 해당 조깅 크루만 목록에서 업데이트
-            setFilteredCrews(prev => prev.map(c => c.id === crew.id ? updatedCrew : c))
+            setAllCrews(prev => prev.map(c => c.id === crew.id ? updatedCrew : c))
             // 추천 상태만 다시 확인
             const hasRecommended = await databaseService.hasUserRecommendedJoggingCrew(crew.id, user.id)
             setHasRecommendedMap(prev => ({ ...prev, [crew.id]: hasRecommended }))
@@ -175,7 +243,7 @@ const JoggingCrewSearchPage = () => {
           console.warn('조깅 크루 정보 새로고침 중 오류 (추천은 성공):', loadError)
           // 추천은 성공했으므로 전체 목록 새로고침 시도
           try {
-            await loadCrews()
+            await loadCrews(true)
           } catch (fullLoadError) {
             console.warn('전체 목록 새로고침도 실패:', fullLoadError)
           }
@@ -365,6 +433,15 @@ const JoggingCrewSearchPage = () => {
                 </div>
               </motion.div>
             ))}
+            
+            {/* 무한 스크롤 트리거 */}
+            {pagination.hasMore && (
+              <div ref={elementRef} className="py-4 text-center">
+                {pagination.loading && (
+                  <div className="text-gray-400">로딩 중...</div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

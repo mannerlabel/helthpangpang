@@ -9,9 +9,19 @@ import NavigationButtons from '@/components/NavigationButtons'
 import { aiAnalysisService } from '@/services/aiAnalysisService'
 import { authService } from '@/services/authService'
 import { databaseService } from '@/services/databaseService'
+import { adminService } from '@/services/adminService'
 
 const ModeSelectionPage = () => {
   const navigate = useNavigate()
+  
+  // 관리자는 이 페이지에 접근할 수 없음
+  useEffect(() => {
+    const user = authService.getCurrentUser()
+    if (user && adminService.isAdmin(user)) {
+      alert('관리자는 일반 사용자 모드를 사용할 수 없습니다.')
+      navigate('/admin/dashboard')
+    }
+  }, [navigate])
   const [sessions, setSessions] = useState<ExerciseSession[]>([])
   const [weeklyData, setWeeklyData] = useState<{ date: string; count: number }[]>([])
   const [loading, setLoading] = useState(true)
@@ -375,8 +385,8 @@ const ModeSelectionPage = () => {
                 설정
               </button>
               <button
-                onClick={() => {
-                  authService.logout()
+                onClick={async () => {
+                  await authService.logout()
                   navigate('/login')
                 }}
                 className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
@@ -441,8 +451,8 @@ const ModeSelectionPage = () => {
                       설정
                     </button>
                     <button
-                      onClick={() => {
-                        authService.logout()
+                      onClick={async () => {
+                        await authService.logout()
                         navigate('/login')
                         setMenuOpen(false)
                       }}
@@ -474,6 +484,20 @@ const ModeSelectionPage = () => {
               <p className="text-white/90 text-center">{mode.description}</p>
             </motion.div>
           ))}
+          
+          {/* 공지사항 메뉴 */}
+          <motion.div
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => navigate('/announcements')}
+            className="bg-gradient-to-br from-yellow-500 to-yellow-700 rounded-2xl p-8 cursor-pointer shadow-2xl hover:shadow-3xl transition-all"
+          >
+            <div className="text-6xl mb-4 text-center">📢</div>
+            <h2 className="text-3xl font-bold text-white mb-4 text-center">
+              공지사항
+            </h2>
+            <p className="text-white/90 text-center">중요한 공지사항을 확인하세요</p>
+          </motion.div>
         </div>
 
         {/* 1주일 운동 그래프 섹션 */}

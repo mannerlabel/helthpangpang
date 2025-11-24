@@ -7,6 +7,7 @@ import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { aiAnalysisService } from '@/services/aiAnalysisService'
 import { authService } from '@/services/authService'
 import { databaseService } from '@/services/databaseService'
+import { adminService } from '@/services/adminService'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import '@/utils/checkSupabaseData' // 데이터 확인 유틸리티 로드
 
@@ -165,12 +166,26 @@ const HomePage = () => {
     }
   }, [selectedDayIndex])
 
+  // 관리자 체크 및 리다이렉트
+  useEffect(() => {
+    const user = authService.getCurrentUser()
+    if (user && adminService.isAdmin(user)) {
+      navigate('/admin/dashboard')
+      return
+    }
+  }, [navigate])
+
   useEffect(() => {
     const loadSessions = async () => {
       try {
         const user = authService.getCurrentUser()
         if (!user) {
           setLoading(false)
+          return
+        }
+        
+        // 관리자는 대시보드로 리다이렉트되므로 여기서는 일반 사용자만 처리
+        if (adminService.isAdmin(user)) {
           return
         }
 
@@ -396,26 +411,42 @@ const HomePage = () => {
               {authService.getCurrentUser()?.name || '사용자'}님
             </span>
             <button
+              onClick={() => navigate('/announcements')}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+            >
+              📢 공지사항
+            </button>
+            <button
               onClick={() => navigate('/settings')}
               className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
             >
               설정
             </button>
             <button
-              onClick={() => {
-                authService.logout()
+              onClick={async () => {
+                await authService.logout()
                 navigate('/login')
               }}
               className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
             >
               로그아웃
             </button>
-            <button
-              onClick={() => navigate('/mode-select')}
-              className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition font-semibold"
-            >
-              시작하기
-            </button>
+            {!adminService.isAdmin(authService.getCurrentUser()) && (
+              <button
+                onClick={() => navigate('/mode-select')}
+                className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition font-semibold"
+              >
+                시작하기
+              </button>
+            )}
+            {adminService.isAdmin(authService.getCurrentUser()) && (
+              <button
+                onClick={() => navigate('/admin/dashboard')}
+                className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition font-semibold"
+              >
+                관리자 대시보드
+              </button>
+            )}
           </div>
         </div>
 

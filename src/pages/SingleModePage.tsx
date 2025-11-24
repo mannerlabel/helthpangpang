@@ -7,6 +7,7 @@ import { SingleGoal, ExerciseType } from '@/types'
 import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { databaseService } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
 
 // Mock 데이터 (차후 Supabase에서 가져올 데이터)
 const mockGoals: SingleGoal[] = [
@@ -46,8 +47,10 @@ const SingleModePage = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const [goals, setGoals] = useState<SingleGoal[]>([])
+  const [pagination, setPagination] = useState({ offset: 0, hasMore: true, loading: false })
+  const PAGE_SIZE = 20
 
-  const loadGoals = async () => {
+  const loadGoals = async (reset: boolean = false) => {
     try {
       const user = authService.getCurrentUser()
       if (!user) {
@@ -55,34 +58,69 @@ const SingleModePage = () => {
         return
       }
       
-      const goals = await databaseService.getSingleGoalsByUserId(user.id)
-      setGoals(goals)
+      const offset = reset ? 0 : pagination.offset
+      if (reset) {
+        setPagination({ offset: 0, hasMore: true, loading: true })
+        setGoals([])
+      } else {
+        setPagination(prev => ({ ...prev, loading: true }))
+      }
+      
+      const result = await databaseService.getSingleGoalsByUserId(user.id, PAGE_SIZE, offset)
+      if (reset) {
+        setGoals(result.data)
+      } else {
+        setGoals(prev => [...prev, ...result.data])
+      }
+      
+      setPagination({ 
+        offset: offset + PAGE_SIZE, 
+        hasMore: result.hasMore, 
+        loading: false 
+      })
     } catch (error) {
       console.error('목표 목록 로드 실패:', error)
-      // localStorage 폴백
-      const savedGoals = localStorage.getItem('singleGoals')
-      if (savedGoals) {
-        try {
-          const parsed = JSON.parse(savedGoals)
-          setGoals(parsed)
-        } catch (e) {
-          console.error('목표 목록 파싱 오류:', e)
+      setPagination(prev => ({ ...prev, loading: false }))
+      // localStorage 폴백 (초기 로드 시에만)
+      if (reset) {
+        const savedGoals = localStorage.getItem('singleGoals')
+        if (savedGoals) {
+          try {
+            const parsed = JSON.parse(savedGoals)
+            setGoals(parsed)
+            setPagination({ offset: parsed.length, hasMore: false, loading: false })
+          } catch (e) {
+            console.error('목표 목록 파싱 오류:', e)
+            setGoals([])
+          }
+        } else {
           setGoals([])
         }
-      } else {
-        setGoals([])
       }
     }
   }
 
   useEffect(() => {
-    loadGoals()
+    loadGoals(true)
   }, [navigate])
 
   // location이 변경될 때마다 목록 다시 로드 (생성/수정 후 돌아올 때)
   useEffect(() => {
-    loadGoals()
+    loadGoals(true)
   }, [location.key])
+
+  // 더 불러오기 (무한 스크롤)
+  const loadMoreGoals = async () => {
+    if (pagination.loading || !pagination.hasMore) return
+    await loadGoals(false)
+  }
+
+  // 무한 스크롤 훅
+  const { elementRef } = useInfiniteScroll({
+    hasMore: pagination.hasMore,
+    loading: pagination.loading,
+    onLoadMore: loadMoreGoals,
+  })
 
   const getExerciseName = (type: ExerciseType): string => {
     return EXERCISE_TYPE_NAMES[type] || '커스텀'
@@ -239,6 +277,15 @@ const SingleModePage = () => {
                 </div>
               </motion.div>
             ))}
+            
+            {/* 무한 스크롤 트리거 */}
+            {pagination.hasMore && (
+              <div ref={elementRef} className="py-4 text-center">
+                {pagination.loading && (
+                  <div className="text-gray-400">로딩 중...</div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

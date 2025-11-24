@@ -7,6 +7,7 @@ import { Crew, ExerciseType } from '@/types'
 import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { databaseService } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
 
 const CrewListPage = () => {
   const navigate = useNavigate()
@@ -19,18 +20,20 @@ const CrewListPage = () => {
   const [hasRecommendedMap, setHasRecommendedMap] = useState<Record<string, boolean>>({})
   const [hasCancelledMap, setHasCancelledMap] = useState<Record<string, boolean>>({})
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({})
+  const [pagination, setPagination] = useState({ offset: 0, hasMore: true, loading: false })
+  const PAGE_SIZE = 20
 
   useEffect(() => {
-    loadMyCrews()
+    loadMyCrews(true)
     
     // storage 이벤트 리스너 추가 (다른 탭/창에서 변경사항 감지)
     const handleStorageChange = () => {
-      loadMyCrews()
+      loadMyCrews(true)
     }
     window.addEventListener('storage', handleStorageChange)
     
     // 주기적으로 목록 새로고침 (다른 PC에서의 변경사항 감지) - 간격을 늘림
-    const interval = setInterval(loadMyCrews, 10000) // 10초마다 (3초 -> 10초로 변경)
+    const interval = setInterval(() => loadMyCrews(true), 10000) // 10초마다
     
     return () => {
       window.removeEventListener('storage', handleStorageChange)
@@ -40,22 +43,34 @@ const CrewListPage = () => {
 
   // location이 변경될 때마다 목록 다시 로드 (생성/수정 후 돌아올 때)
   useEffect(() => {
-    loadMyCrews()
+    loadMyCrews(true)
   }, [location.key])
 
-  const loadMyCrews = async () => {
+  const loadMyCrews = async (reset: boolean = false) => {
     const user = authService.getCurrentUser()
     if (!user) return
 
     try {
-      const crews = await databaseService.getCrewsByUserId(user.id)
-      setMyCrews(crews as Crew[])
+      const offset = reset ? 0 : pagination.offset
+      if (reset) {
+        setPagination({ offset: 0, hasMore: true, loading: true })
+        setMyCrews([])
+      } else {
+        setPagination(prev => ({ ...prev, loading: true }))
+      }
+      
+      const result = await databaseService.getCrewsByUserId(user.id, PAGE_SIZE, offset)
+      if (reset) {
+        setMyCrews(result.data as Crew[])
+      } else {
+        setMyCrews(prev => [...prev, ...result.data as Crew[]])
+      }
       
       // 각 크루에 대해 추천 여부 확인 및 생성자 정보 가져오기
       const recommendedMap: Record<string, boolean> = {}
       const cancelledMap: Record<string, boolean> = {}
       const creatorNameMap: Record<string, string> = {}
-      for (const crew of crews) {
+      for (const crew of result.data) {
         const hasRecommended = await databaseService.hasUserRecommendedCrew(crew.id, user.id)
         const hasCancelled = await databaseService.hasUserCancelledCrewRecommendation(crew.id, user.id)
         recommendedMap[crew.id] = hasRecommended
@@ -71,15 +86,41 @@ const CrewListPage = () => {
           console.error(`크루 ${crew.id}의 생성자 정보 가져오기 실패:`, error)
         }
       }
-      setHasRecommendedMap(recommendedMap)
-      setHasCancelledMap(cancelledMap)
-      setCreatorMap(creatorNameMap)
+      if (reset) {
+        setHasRecommendedMap(recommendedMap)
+        setHasCancelledMap(cancelledMap)
+        setCreatorMap(creatorNameMap)
+      } else {
+        setHasRecommendedMap(prev => ({ ...prev, ...recommendedMap }))
+        setHasCancelledMap(prev => ({ ...prev, ...cancelledMap }))
+        setCreatorMap(prev => ({ ...prev, ...creatorNameMap }))
+      }
+      
+      setPagination({ 
+        offset: offset + PAGE_SIZE, 
+        hasMore: result.hasMore, 
+        loading: false 
+      })
     } catch (error: any) {
       console.error('크루 목록 로드 실패:', error)
       console.error('에러 상세:', error?.message, error?.code, error?.details, error?.hint)
       alert(`크루 목록을 불러오는데 실패했습니다: ${error?.message || String(error)}`)
+      setPagination(prev => ({ ...prev, loading: false }))
     }
   }
+
+  // 더 불러오기 (무한 스크롤)
+  const loadMoreCrews = async () => {
+    if (pagination.loading || !pagination.hasMore) return
+    await loadMyCrews(false)
+  }
+
+  // 무한 스크롤 훅
+  const { elementRef } = useInfiniteScroll({
+    hasMore: pagination.hasMore,
+    loading: pagination.loading,
+    onLoadMore: loadMoreCrews,
+  })
 
   // 정렬 적용
   useEffect(() => {
@@ -446,6 +487,15 @@ const CrewListPage = () => {
                 </div>
               </motion.div>
             ))}
+            
+            {/* 무한 스크롤 트리거 */}
+            {pagination.hasMore && (
+              <div ref={elementRef} className="py-4 text-center">
+                {pagination.loading && (
+                  <div className="text-gray-400">로딩 중...</div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -454,4 +504,5 @@ const CrewListPage = () => {
 }
 
 export default CrewListPage
+
 

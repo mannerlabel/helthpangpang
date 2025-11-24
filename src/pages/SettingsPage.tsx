@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { audioService } from '@/services/audioService'
 import { AppSettings } from '@/types'
+import { userService } from '@/services/userService'
+import { authService } from '@/services/authService'
 
 const SettingsPage = () => {
   const navigate = useNavigate()
@@ -193,7 +195,7 @@ const SettingsPage = () => {
         </div>
 
         {/* 버튼 */}
-        <div className="flex gap-4">
+        <div className="flex gap-4 mb-6">
           <button
             onClick={() => navigate(-1)}
             className="flex-1 px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition"
@@ -205,6 +207,38 @@ const SettingsPage = () => {
             className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition"
           >
             저장
+          </button>
+        </div>
+
+        {/* 회원탈퇴 섹션 */}
+        <div className="bg-red-900/20 border border-red-500/50 rounded-2xl p-6">
+          <h2 className="text-2xl font-bold text-white mb-4">회원탈퇴</h2>
+          <p className="text-gray-400 mb-4">
+            회원탈퇴를 하시면 모든 데이터가 삭제되며 복구할 수 없습니다.
+            <br />
+            탈퇴 후에는 로그인이 불가능하며, 관리자가 최종 삭제를 처리합니다.
+          </p>
+          <button
+            onClick={async () => {
+              if (!confirm('정말 회원탈퇴를 하시겠습니까?\n탈퇴 후에는 로그인이 불가능하며, 모든 데이터가 삭제됩니다.')) {
+                return
+              }
+              
+              if (!confirm('정말로 탈퇴하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) {
+                return
+              }
+
+              const result = await userService.deactivateAccount()
+              if (result.success) {
+                alert('회원탈퇴가 완료되었습니다.')
+                navigate('/login')
+              } else {
+                alert(`회원탈퇴 실패: ${result.error}`)
+              }
+            }}
+            className="w-full px-6 py-4 bg-red-600 text-white rounded-xl hover:bg-red-700 transition font-semibold"
+          >
+            회원탈퇴
           </button>
         </div>
       </div>

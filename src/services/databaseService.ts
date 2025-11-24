@@ -27,6 +27,9 @@ export interface User {
   avatar?: string
   createdAt: number
   lastLoginAt?: number
+  role?: 'user' | 'admin' // 기본값: 'user'
+  isDeleted?: boolean // 탈퇴 여부
+  deletedAt?: number // 탈퇴 시간
 }
 
 export interface Crew {
@@ -53,6 +56,10 @@ export interface Crew {
   videoShareEnabled: boolean // 영상 공유 활성화 여부
   audioShareEnabled: boolean // 음성 공유 활성화 여부
   recommendations: number // 추천수
+  isDormant?: boolean // 휴면 모드 여부
+  lastActivityAt?: number // 마지막 활동 시간
+  dormantAt?: number // 휴면 지정 시간
+  scheduledDeletionAt?: number // 예정된 삭제 시간
 }
 
 export interface CrewMember {
@@ -84,6 +91,10 @@ export interface JoggingCrew {
   createdBy: string
   memberIds: string[]
   recommendations: number // 추천수
+  isDormant?: boolean // 휴면 모드 여부
+  lastActivityAt?: number // 마지막 활동 시간
+  dormantAt?: number // 휴면 지정 시간
+  scheduledDeletionAt?: number // 예정된 삭제 시간
 }
 
 export interface ChatMessage {
@@ -660,6 +671,9 @@ class DatabaseService {
       if (updates.name) updateData.name = updates.name
       if (updates.avatar !== undefined) updateData.avatar = updates.avatar
       if (updates.lastLoginAt) updateData.last_login_at = new Date(updates.lastLoginAt).toISOString()
+      if (updates.role !== undefined) updateData.role = updates.role
+      if (updates.isDeleted !== undefined) updateData.is_deleted = updates.isDeleted
+      if (updates.deletedAt !== undefined) updateData.deleted_at = updates.deletedAt ? new Date(updates.deletedAt).toISOString() : null
       
       const { data, error } = await supabase
         .from('users')
@@ -818,7 +832,7 @@ class DatabaseService {
     }
   }
 
-  async getCrewsByUserId(userId: string): Promise<Crew[]> {
+  async getCrewsByUserId(userId: string, limit: number = 50, offset: number = 0): Promise<{ data: Crew[]; hasMore: boolean; total?: number }> {
     await this.initialize()
     
     if (USE_SUPABASE && supabase) {
@@ -873,14 +887,18 @@ class DatabaseService {
         throw error
       }
       
-      if (!memberRecords || memberRecords.length === 0) return []
+      if (!memberRecords || memberRecords.length === 0) return { data: [], hasMore: false }
 
       const crewIds = memberRecords.map(m => m.crew_id)
+      const totalCrews = crewIds.length
+      
+      // 페이지네이션 적용
+      const paginatedCrewIds = crewIds.slice(offset, offset + limit)
       
       const { data: crews, error: crewsError } = await supabase
         .from('crews')
         .select('*')
-        .in('id', crewIds)
+        .in('id', paginatedCrewIds)
 
       if (crewsError) {
         console.error('crews 조회 에러:', crewsError)
@@ -944,15 +962,18 @@ class DatabaseService {
         })
       )
 
-      return crewsWithMembers
+      const hasMore = offset + limit < totalCrews
+      return { data: crewsWithMembers, hasMore, total: totalCrews }
     } else {
     const crews = this.readTable<Crew>('crews')
       const members = this.readTable<CrewMember>('crew_members')
       
       // 실시간으로 멤버 수 계산하여 반환
-      return crews
-        .filter((c) => c.memberIds.includes(userId))
-        .map((crew) => {
+      const filteredCrews = crews.filter((c) => c.memberIds.includes(userId))
+      const totalCrews = filteredCrews.length
+      const paginatedCrews = filteredCrews.slice(offset, offset + limit)
+      
+      const crewsWithMembers = paginatedCrews.map((crew) => {
           const crewMembers = members.filter((m) => m.crewId === crew.id)
           const actualMemberCount = crewMembers.length
           const actualMemberIds = crewMembers.map((m) => m.userId)
@@ -968,18 +989,23 @@ class DatabaseService {
           }
           return crew
         })
+      
+      const hasMore = offset + limit < totalCrews
+      return { data: crewsWithMembers, hasMore, total: totalCrews }
     }
   }
 
-  async getAllCrews(): Promise<Crew[]> {
+  async getAllCrews(limit: number = 50, offset: number = 0): Promise<{ data: Crew[]; hasMore: boolean; total?: number }> {
     await this.initialize()
     
     if (USE_SUPABASE && supabase) {
       console.log('Supabase에서 크루 목록 가져오기 시작')
-      const { data: crews, error } = await supabase
+      const { data: crews, error, count } = await supabase
         .from('crews')
-        .select('*')
+        .select('*', { count: 'exact' })
+        .eq('is_dormant', false) // 휴면 크루 제외
         .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1)
 
       if (error) {
         console.error('Supabase 크루 조회 에러:', error)
@@ -1041,10 +1067,15 @@ class DatabaseService {
         })
       )
 
-      return crewsWithMembers
+      const hasMore = count ? offset + limit < count : false
+      return { data: crewsWithMembers, hasMore, total: count || undefined }
     }
     
-    throw new Error('Supabase가 설정되지 않았습니다.')
+    // localStorage 폴백
+    const crews = this.readTable<Crew>('crews')
+    const paginatedCrews = crews.slice(offset, offset + limit)
+    const hasMore = offset + limit < crews.length
+    return { data: paginatedCrews, hasMore, total: crews.length }
   }
 
   async updateCrew(id: string, updates: Partial<Crew>): Promise<Crew | null> {
@@ -1063,6 +1094,10 @@ class DatabaseService {
         if (updates.currentMembers !== undefined) updateData.current_members = updates.currentMembers
         if (updates.memberIds !== undefined) updateData.member_ids = updates.memberIds
         if (updates.recommendations !== undefined) updateData.recommendations = updates.recommendations
+        if (updates.isDormant !== undefined) updateData.is_dormant = updates.isDormant
+        if (updates.lastActivityAt !== undefined) updateData.last_activity_at = new Date(updates.lastActivityAt).toISOString()
+        if (updates.dormantAt !== undefined) updateData.dormant_at = updates.dormantAt ? new Date(updates.dormantAt).toISOString() : null
+        if (updates.scheduledDeletionAt !== undefined) updateData.scheduled_deletion_at = updates.scheduledDeletionAt ? new Date(updates.scheduledDeletionAt).toISOString() : null
         
         const { data, error } = await supabase
           .from('crews')
@@ -2002,7 +2037,7 @@ class DatabaseService {
         throw error
       }
 
-      // 크루의 멤버 수 업데이트
+      // 크루의 멤버 수 업데이트 및 활동 시간 업데이트
       const { data: allMembers } = await supabase
         .from('crew_members')
         .select('user_id')
@@ -2015,6 +2050,7 @@ class DatabaseService {
             .update({
               current_members: allMembers.length,
               member_ids: allMembers.map(m => m.user_id),
+              last_activity_at: new Date().toISOString(), // 활동 시간 업데이트
             })
             .eq('id', crewId)
         } catch (updateError: any) {
@@ -2364,7 +2400,7 @@ class DatabaseService {
     return crews.find((c) => c.id === id) || null
   }
 
-  async getJoggingCrewsByUserId(userId: string): Promise<JoggingCrew[]> {
+  async getJoggingCrewsByUserId(userId: string, limit: number = 50, offset: number = 0): Promise<{ data: JoggingCrew[]; hasMore: boolean; total?: number }> {
     await this.initialize()
     
     if (USE_SUPABASE && supabase) {
@@ -2390,21 +2426,21 @@ class DatabaseService {
             
             if (userError) {
               console.warn('Supabase 사용자를 찾을 수 없음:', userError)
-              return [] // Supabase에 사용자가 없으면 빈 배열 반환
+              return { data: [], hasMore: false } // Supabase에 사용자가 없으면 빈 배열 반환
             }
             
             if (supabaseUser) {
               supabaseUserId = supabaseUser.id
               console.log('Supabase 사용자 ID 매핑:', userId, '->', supabaseUserId)
             } else {
-              return [] // Supabase에 사용자가 없으면 빈 배열 반환
+              return { data: [], hasMore: false } // Supabase에 사용자가 없으면 빈 배열 반환
             }
           }
         }
       }
       
       // 사용자가 멤버인 조깅 크루 조회
-      const { data: crews, error } = await supabase
+      const { data: allCrews, error } = await supabase
         .from('jogging_crews')
         .select('*')
         .contains('member_ids', [supabaseUserId])
@@ -2414,16 +2450,20 @@ class DatabaseService {
         throw error
       }
       
-      console.log('조회된 조깅 크루:', crews)
+      console.log('조회된 조깅 크루:', allCrews)
       
-      if (!crews || crews.length === 0) return []
+      if (!allCrews || allCrews.length === 0) return { data: [], hasMore: false }
+      
+      // 페이지네이션 적용
+      const totalCrews = allCrews.length
+      const paginatedCrews = allCrews.slice(offset, offset + limit)
       
       // 각 크루의 실시간 멤버 수 계산
       if (!supabase) throw new Error('Supabase client not initialized')
       const supabaseClient = supabase
       
       const crewsWithMembers = await Promise.all(
-        crews.map(async (crew) => {
+        paginatedCrews.map(async (crew) => {
           // member_ids 배열에서 실제 멤버 수 계산
           const actualMemberIds = crew.member_ids || []
           const actualMemberCount = actualMemberIds.length
@@ -2458,14 +2498,19 @@ class DatabaseService {
         })
       )
       
-      return crewsWithMembers
+      const hasMore = offset + limit < totalCrews
+      return { data: crewsWithMembers, hasMore, total: totalCrews }
     } else {
       const crews = this.readTable<JoggingCrew>('jogging_crews')
-      return crews.filter((c) => c.memberIds.includes(userId))
+      const filteredCrews = crews.filter((c) => c.memberIds.includes(userId))
+      const totalCrews = filteredCrews.length
+      const paginatedCrews = filteredCrews.slice(offset, offset + limit)
+      const hasMore = offset + limit < totalCrews
+      return { data: paginatedCrews, hasMore, total: totalCrews }
     }
   }
 
-  async getAllJoggingCrews(): Promise<JoggingCrew[]> {
+  async getAllJoggingCrews(limit: number = 50, offset: number = 0): Promise<{ data: JoggingCrew[]; hasMore: boolean; total?: number }> {
     await this.initialize()
     
     // 샘플 조깅 크루 생성 (localStorage만)
@@ -2475,38 +2520,34 @@ class DatabaseService {
     
     if (USE_SUPABASE && supabase) {
       try {
-        const { data, error } = await supabase
+        const { data, error, count } = await supabase
           .from('jogging_crews')
-          .select('*')
+          .select('*', { count: 'exact' })
+          .eq('is_dormant', false) // 휴면 크루 제외
           .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1)
         
         if (error) {
           console.error('Supabase 조깅 크루 조회 에러:', error)
           throw error
         }
         
-        // 샘플 조깅 크루 생성 (Supabase)
-        await this.ensureTestJoggingCrews()
-        
-        // 다시 조회
-        const { data: updatedData, error: updatedError } = await supabase
-          .from('jogging_crews')
-          .select('*')
-          .order('created_at', { ascending: false })
-        
-        if (updatedError) {
-          console.error('Supabase 조깅 크루 재조회 에러:', updatedError)
-          return (data || []).map(c => this.mapSupabaseJoggingCrew(c))
-        }
-        
-        return (updatedData || []).map(c => this.mapSupabaseJoggingCrew(c))
+        const crews = (data || []).map(c => this.mapSupabaseJoggingCrew(c))
+        const hasMore = count ? offset + limit < count : false
+        return { data: crews, hasMore, total: count || undefined }
       } catch (e) {
         console.error('Supabase 조깅 크루 조회 중 오류:', e)
-        return this.readTable<JoggingCrew>('jogging_crews')
+        const crews = this.readTable<JoggingCrew>('jogging_crews')
+        const paginatedCrews = crews.slice(offset, offset + limit)
+        const hasMore = offset + limit < crews.length
+        return { data: paginatedCrews, hasMore, total: crews.length }
       }
     }
     
-    return this.readTable<JoggingCrew>('jogging_crews')
+    const crews = this.readTable<JoggingCrew>('jogging_crews')
+    const paginatedCrews = crews.slice(offset, offset + limit)
+    const hasMore = offset + limit < crews.length
+    return { data: paginatedCrews, hasMore, total: crews.length }
   }
 
   async updateJoggingCrew(id: string, updates: Partial<JoggingCrew>): Promise<JoggingCrew | null> {
@@ -2525,6 +2566,10 @@ class DatabaseService {
         if (updates.currentMembers !== undefined) updateData.current_members = updates.currentMembers
         if (updates.memberIds !== undefined) updateData.member_ids = updates.memberIds
         if (updates.recommendations !== undefined) updateData.recommendations = updates.recommendations
+        if (updates.isDormant !== undefined) updateData.is_dormant = updates.isDormant
+        if (updates.lastActivityAt !== undefined) updateData.last_activity_at = new Date(updates.lastActivityAt).toISOString()
+        if (updates.dormantAt !== undefined) updateData.dormant_at = updates.dormantAt ? new Date(updates.dormantAt).toISOString() : null
+        if (updates.scheduledDeletionAt !== undefined) updateData.scheduled_deletion_at = updates.scheduledDeletionAt ? new Date(updates.scheduledDeletionAt).toISOString() : null
         
         const { data, error } = await supabase
           .from('jogging_crews')
@@ -2630,6 +2675,7 @@ class DatabaseService {
         await this.updateJoggingCrew(crewId, {
           currentMembers: crew.currentMembers + 1,
           memberIds: updatedMemberIds,
+          lastActivityAt: Date.now(),
         })
         
         console.log('조깅 크루 참여 성공')
@@ -3384,6 +3430,9 @@ class DatabaseService {
       avatar: user.avatar,
       createdAt: new Date(user.created_at).getTime(),
       lastLoginAt: user.last_login_at ? new Date(user.last_login_at).getTime() : undefined,
+      role: user.role || 'user',
+      isDeleted: user.is_deleted || false,
+      deletedAt: user.deleted_at ? new Date(user.deleted_at).getTime() : undefined,
     }
   }
 
@@ -3402,6 +3451,10 @@ class DatabaseService {
       videoShareEnabled: crew.video_share_enabled,
       audioShareEnabled: crew.audio_share_enabled,
       recommendations: crew.recommendations || 0,
+      isDormant: crew.is_dormant || false,
+      lastActivityAt: crew.last_activity_at ? new Date(crew.last_activity_at).getTime() : undefined,
+      dormantAt: crew.dormant_at ? new Date(crew.dormant_at).getTime() : undefined,
+      scheduledDeletionAt: crew.scheduled_deletion_at ? new Date(crew.scheduled_deletion_at).getTime() : undefined,
     }
   }
 
@@ -3432,6 +3485,10 @@ class DatabaseService {
       createdBy: crew.created_by,
       memberIds: crew.member_ids || [],
       recommendations: crew.recommendations || 0,
+      isDormant: crew.is_dormant || false,
+      lastActivityAt: crew.last_activity_at ? new Date(crew.last_activity_at).getTime() : undefined,
+      dormantAt: crew.dormant_at ? new Date(crew.dormant_at).getTime() : undefined,
+      scheduledDeletionAt: crew.scheduled_deletion_at ? new Date(crew.scheduled_deletion_at).getTime() : undefined,
     }
   }
 
@@ -3535,7 +3592,7 @@ class DatabaseService {
     return newGoal
   }
 
-  async getSingleGoalsByUserId(userId: string): Promise<SingleGoal[]> {
+  async getSingleGoalsByUserId(userId: string, limit: number = 50, offset: number = 0): Promise<{ data: SingleGoal[]; hasMore: boolean; total?: number }> {
     await this.initialize()
     
     if (USE_SUPABASE && supabase) {
@@ -3546,19 +3603,22 @@ class DatabaseService {
           supabaseUserId = await this.getSupabaseUserId(userId)
         }
         
-        const { data, error } = await supabase
+        const { data, error, count } = await supabase
           .from('single_goals')
-          .select('*')
+          .select('*', { count: 'exact' })
           .eq('user_id', supabaseUserId)
           .eq('is_active', true)
           .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1)
         
         if (error) {
           console.error('Supabase 싱글 목표 조회 실패:', error)
           throw error
         }
         
-        return (data || []).map((g: any) => this.mapSupabaseSingleGoal(g))
+        const goals = (data || []).map((g: any) => this.mapSupabaseSingleGoal(g))
+        const hasMore = count ? offset + limit < count : false
+        return { data: goals, hasMore, total: count || undefined }
       } catch (e) {
         console.error('Supabase 싱글 목표 조회 중 오류:', e)
         // Supabase 실패 시 localStorage로 폴백
@@ -3567,7 +3627,11 @@ class DatabaseService {
     
     // localStorage 조회
     const goals = this.readTable<SingleGoal>('single_goals')
-    return goals.filter((g) => g.createdBy === userId && g.isActive)
+    const filteredGoals = goals.filter((g) => g.createdBy === userId && g.isActive)
+    const totalGoals = filteredGoals.length
+    const paginatedGoals = filteredGoals.slice(offset, offset + limit)
+    const hasMore = offset + limit < totalGoals
+    return { data: paginatedGoals, hasMore, total: totalGoals }
   }
 
   async updateSingleGoal(id: string, updates: Partial<SingleGoal>): Promise<SingleGoal | null> {
@@ -3729,7 +3793,9 @@ class DatabaseService {
           throw error
         }
         
-        return (data || []).map((g: any) => this.mapSupabaseJoggingGoal(g))
+        const goals = (data || []).map((g: any) => this.mapSupabaseJoggingGoal(g))
+        const hasMore = count ? offset + limit < count : false
+        return { data: goals, hasMore, total: count || undefined }
       } catch (e) {
         console.error('Supabase 조깅 목표 조회 중 오류:', e)
         // Supabase 실패 시 localStorage로 폴백
@@ -3738,7 +3804,11 @@ class DatabaseService {
     
     // localStorage 조회
     const goals = this.readTable<JoggingGoal>('jogging_goals')
-    return goals.filter((g) => g.createdBy === userId && g.isActive)
+    const filteredGoals = goals.filter((g) => g.createdBy === userId && g.isActive)
+    const totalGoals = filteredGoals.length
+    const paginatedGoals = filteredGoals.slice(offset, offset + limit)
+    const hasMore = offset + limit < totalGoals
+    return { data: paginatedGoals, hasMore, total: totalGoals }
   }
 
   async updateJoggingGoal(id: string, updates: Partial<JoggingGoal>): Promise<JoggingGoal | null> {

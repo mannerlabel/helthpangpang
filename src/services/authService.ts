@@ -4,6 +4,7 @@
  */
 
 import { databaseService, User } from './databaseService'
+import { loginHistoryService } from './loginHistoryService'
 
 // 간단한 비밀번호 해시 (실제로는 bcrypt 등 사용)
 function hashPassword(password: string): string {
@@ -44,6 +45,11 @@ class AuthService {
         return { success: false, error: '이메일 또는 비밀번호가 올바르지 않습니다.' }
       }
 
+      // 탈퇴한 계정 체크
+      if (user.isDeleted) {
+        return { success: false, error: '탈퇴한 계정입니다. 관리자에게 문의하세요.' }
+      }
+
       if (!verifyPassword(password, user.password)) {
         return { success: false, error: '이메일 또는 비밀번호가 올바르지 않습니다.' }
       }
@@ -55,6 +61,9 @@ class AuthService {
 
       // 마지막 로그인 시간 업데이트
       await databaseService.updateUser(user.id, { lastLoginAt: Date.now() })
+
+      // 로그인 히스토리 기록
+      await loginHistoryService.recordLogin(user.id)
 
       return { success: true, user }
     } catch (error) {
@@ -90,7 +99,10 @@ class AuthService {
   }
 
   // 로그아웃
-  logout(): void {
+  async logout(): Promise<void> {
+    // 로그아웃 히스토리 기록
+    await loginHistoryService.recordLogout()
+    
     this.currentUser = null
     localStorage.removeItem('current_user_id')
   }
