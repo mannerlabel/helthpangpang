@@ -7,9 +7,11 @@ import { authService } from '@/services/authService'
 import { adminService, DashboardStats, Announcement } from '@/services/adminService'
 import { loginHistoryService, LoginHistory } from '@/services/loginHistoryService'
 import { databaseService, User, Crew, JoggingCrew } from '@/services/databaseService'
+import { rankService } from '@/services/rankService'
 import { SingleGoal, JoggingGoal } from '@/types'
 import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
+import RankBadge from '@/components/RankBadge'
 
 // 꺽은선 그래프 컴포넌트
 interface LineChartProps {
@@ -192,7 +194,11 @@ const AdminDashboardPage = () => {
   }>({ total: 0, active: 0, readCounts: {} })
   
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({})
+  const [creatorRanks, setCreatorRanks] = useState<Record<string, number>>({}) // 생성자 계급
+  const [crewRanks, setCrewRanks] = useState<Record<string, number>>({}) // 크루 계급
+  const [userRanks, setUserRanks] = useState<Record<string, number>>({}) // 사용자 계급
   const [goalCreatorMap, setGoalCreatorMap] = useState<Record<string, string>>({})
+  const [goalCreatorRanks, setGoalCreatorRanks] = useState<Record<string, number>>({}) // 목표 생성자 계급
   const [announcementCreatorMap, setAnnouncementCreatorMap] = useState<Record<string, string>>({})
   
   // 페이지네이션 상태
@@ -235,8 +241,23 @@ const AdminDashboardPage = () => {
       ])
       setStats(dashboardStats)
       setLoginHistory(allLoginHistory)
-      setUsers(usersResult.data.filter(u => !u.isDeleted))
+      const filteredUsers = usersResult.data.filter(u => !u.isDeleted)
+      setUsers(filteredUsers)
       setDeletedUsers(allDeletedUsers)
+      
+      // 사용자 계급 가져오기
+      const userRankMap: Record<string, number> = {}
+      for (const user of filteredUsers) {
+        try {
+          const rank = await rankService.getUserRank(user.id)
+          userRankMap[user.id] = rank
+        } catch (error) {
+          console.error(`사용자 ${user.id}의 계급 가져오기 실패:`, error)
+          userRankMap[user.id] = 1
+        }
+      }
+      setUserRanks(userRankMap)
+      
       setCrews(crewsResult.data)
       setJoggingCrews(joggingCrewsResult.data)
       setSingleGoals(singleGoalsResult.data)
@@ -252,33 +273,49 @@ const AdminDashboardPage = () => {
       setJoggingGoalPagination({ offset: PAGE_SIZE, hasMore: joggingGoalsResult.hasMore, loading: false })
       setAnnouncementPagination({ offset: PAGE_SIZE, hasMore: announcementsResult.hasMore, loading: false })
       
-      // 생성자 정보 가져오기
+      // 생성자 정보 가져오기 및 계급 확인
       const creatorMap: Record<string, string> = {}
+      const creatorRankMap: Record<string, number> = {}
+      const crewRankMap: Record<string, number> = {}
       for (const crew of [...crewsResult.data, ...joggingCrewsResult.data]) {
         try {
           const creator = await databaseService.getUserById(crew.createdBy)
           if (creator) {
             creatorMap[crew.id] = creator.name
+            // 생성자 계급 가져오기
+            const creatorRank = await rankService.getUserRank(crew.createdBy)
+            creatorRankMap[crew.id] = creatorRank
           }
+          // 크루 계급 가져오기
+          const isJoggingCrew = 'targetDistance' in crew
+          const crewRank = await rankService.getCrewRank(crew.id, isJoggingCrew)
+          crewRankMap[crew.id] = crewRank
         } catch (error) {
           console.error(`크루 ${crew.id}의 생성자 정보 가져오기 실패:`, error)
         }
       }
       setCreatorMap(creatorMap)
+      setCreatorRanks(creatorRankMap)
+      setCrewRanks(crewRankMap)
 
-      // 목표 생성자 정보 가져오기
+      // 목표 생성자 정보 가져오기 및 계급 확인
       const goalCreatorMap: Record<string, string> = {}
+      const goalCreatorRankMap: Record<string, number> = {}
       for (const goal of [...singleGoalsResult.data, ...joggingGoalsResult.data]) {
         try {
           const creator = await databaseService.getUserById(goal.createdBy)
           if (creator) {
             goalCreatorMap[goal.id] = creator.name
+            // 생성자 계급 가져오기
+            const creatorRank = await rankService.getUserRank(goal.createdBy)
+            goalCreatorRankMap[goal.id] = creatorRank
           }
         } catch (error) {
           console.error(`목표 ${goal.id}의 생성자 정보 가져오기 실패:`, error)
         }
       }
       setGoalCreatorMap(goalCreatorMap)
+      setGoalCreatorRanks(goalCreatorRankMap)
 
       // 공지사항 생성자 정보 가져오기
       const announcementCreatorMap: Record<string, string> = {}
@@ -309,8 +346,23 @@ const AdminDashboardPage = () => {
         adminService.getAllUsers(PAGE_SIZE, 0),
         adminService.getDeletedUsers(),
       ])
-      setUsers(usersResult.data.filter(u => !u.isDeleted))
+      const filteredUsers = usersResult.data.filter(u => !u.isDeleted)
+      setUsers(filteredUsers)
       setDeletedUsers(allDeletedUsers)
+      
+      // 사용자 계급 가져오기
+      const userRankMap: Record<string, number> = {}
+      for (const user of filteredUsers) {
+        try {
+          const rank = await rankService.getUserRank(user.id)
+          userRankMap[user.id] = rank
+        } catch (error) {
+          console.error(`사용자 ${user.id}의 계급 가져오기 실패:`, error)
+          userRankMap[user.id] = 1
+        }
+      }
+      setUserRanks(userRankMap)
+      
       setUserPagination({ offset: PAGE_SIZE, hasMore: usersResult.hasMore, loading: false })
     } catch (error) {
       console.error('사용자 목록 로드 실패:', error)
@@ -477,19 +529,24 @@ const AdminDashboardPage = () => {
       setSingleGoals(singleGoalsResult.data)
       setJoggingGoals(joggingGoalsResult.data)
       
-      // 목표 생성자 정보 가져오기
+      // 목표 생성자 정보 가져오기 및 계급 확인
       const goalCreatorMap: Record<string, string> = {}
+      const goalCreatorRankMap: Record<string, number> = {}
       for (const goal of [...singleGoalsResult.data, ...joggingGoalsResult.data]) {
         try {
           const creator = await databaseService.getUserById(goal.createdBy)
           if (creator) {
             goalCreatorMap[goal.id] = creator.name
+            // 생성자 계급 가져오기
+            const creatorRank = await rankService.getUserRank(goal.createdBy)
+            goalCreatorRankMap[goal.id] = creatorRank
           }
         } catch (error) {
           console.error(`목표 ${goal.id}의 생성자 정보 가져오기 실패:`, error)
         }
       }
       setGoalCreatorMap(goalCreatorMap)
+      setGoalCreatorRanks(goalCreatorRankMap)
       setSingleGoalPagination({ offset: PAGE_SIZE, hasMore: singleGoalsResult.hasMore, loading: false })
       setJoggingGoalPagination({ offset: PAGE_SIZE, hasMore: joggingGoalsResult.hasMore, loading: false })
     } catch (error) {
@@ -513,19 +570,24 @@ const AdminDashboardPage = () => {
         loading: false 
       })
       
-      // 생성자 정보 가져오기
+      // 생성자 정보 가져오기 및 계급 확인
       const goalCreatorMap: Record<string, string> = {}
+      const goalCreatorRankMap: Record<string, number> = {}
       for (const goal of result.data) {
         try {
           const creator = await databaseService.getUserById(goal.createdBy)
           if (creator) {
             goalCreatorMap[goal.id] = creator.name
+            // 생성자 계급 가져오기
+            const creatorRank = await rankService.getUserRank(goal.createdBy)
+            goalCreatorRankMap[goal.id] = creatorRank
           }
         } catch (error) {
           console.error(`목표 ${goal.id}의 생성자 정보 가져오기 실패:`, error)
         }
       }
       setGoalCreatorMap(prev => ({ ...prev, ...goalCreatorMap }))
+      setGoalCreatorRanks(prev => ({ ...prev, ...goalCreatorRankMap }))
     } catch (error) {
       console.error('싱글 목표 목록 추가 로드 실패:', error)
       setSingleGoalPagination(prev => ({ ...prev, loading: false }))
@@ -546,19 +608,24 @@ const AdminDashboardPage = () => {
         loading: false 
       })
       
-      // 생성자 정보 가져오기
+      // 생성자 정보 가져오기 및 계급 확인
       const goalCreatorMap: Record<string, string> = {}
+      const goalCreatorRankMap: Record<string, number> = {}
       for (const goal of result.data) {
         try {
           const creator = await databaseService.getUserById(goal.createdBy)
           if (creator) {
             goalCreatorMap[goal.id] = creator.name
+            // 생성자 계급 가져오기
+            const creatorRank = await rankService.getUserRank(goal.createdBy)
+            goalCreatorRankMap[goal.id] = creatorRank
           }
         } catch (error) {
           console.error(`목표 ${goal.id}의 생성자 정보 가져오기 실패:`, error)
         }
       }
       setGoalCreatorMap(prev => ({ ...prev, ...goalCreatorMap }))
+      setGoalCreatorRanks(prev => ({ ...prev, ...goalCreatorRankMap }))
     } catch (error) {
       console.error('조깅 목표 목록 추가 로드 실패:', error)
       setJoggingGoalPagination(prev => ({ ...prev, loading: false }))
@@ -1487,7 +1554,12 @@ const AdminDashboardPage = () => {
                     )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <div className="text-white font-semibold">{user.name}</div>
+                        <div className="text-white font-semibold flex items-center gap-1">
+                          {user.name}
+                          {userRanks[user.id] && (
+                            <RankBadge rank={userRanks[user.id]} type="user" size="sm" showText={true} />
+                          )}
+                        </div>
                         {user.role === 'admin' && (
                           <span className="text-xs text-blue-400 bg-blue-500/20 px-2 py-1 rounded">관리자</span>
                         )}
@@ -1759,13 +1831,21 @@ const AdminDashboardPage = () => {
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <div className="text-white font-semibold">{crew.name}</div>
+                          <div className="text-white font-semibold flex items-center gap-1">
+                            {crew.name}
+                            {crewRanks[crew.id] && (
+                              <RankBadge rank={crewRanks[crew.id]} type={('targetDistance' in crew) ? 'crew' : 'crew'} size="sm" showText={true} />
+                            )}
+                          </div>
                           {crew.isDormant && (
                             <span className="text-xs text-yellow-400 bg-yellow-500/20 px-2 py-1 rounded">휴면</span>
                           )}
                         </div>
-                        <div className="text-sm text-gray-400 mt-1">
+                        <div className="text-sm text-gray-400 mt-1 flex items-center gap-1">
                           생성자: {creatorMap[crew.id] || '알 수 없음'}
+                          {creatorMap[crew.id] && creatorRanks[crew.id] && (
+                            <RankBadge rank={creatorRanks[crew.id]} type="user" size="sm" showText={true} />
+                          )}
                         </div>
                         <div className="text-xs text-gray-500 mt-1">
                           멤버: {crew.currentMembers}명 | 생성일: {new Date(crew.createdAt).toLocaleDateString('ko-KR')}
@@ -1963,8 +2043,11 @@ const AdminDashboardPage = () => {
                             <span className="text-xs text-yellow-400 bg-yellow-500/20 px-2 py-1 rounded">비활성</span>
                           )}
                         </div>
-                        <div className="text-sm text-gray-400 mt-1">
+                        <div className="text-sm text-gray-400 mt-1 flex items-center gap-1">
                           생성자: {goalCreatorMap[goal.id] || '알 수 없음'}
+                          {goalCreatorMap[goal.id] && goalCreatorRanks[goal.id] && (
+                            <RankBadge rank={goalCreatorRanks[goal.id]} type="user" size="sm" showText={true} />
+                          )}
                         </div>
                         <div className="text-xs text-gray-500 mt-1">
                           생성일: {new Date(goal.createdAt).toLocaleDateString('ko-KR')}

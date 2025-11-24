@@ -10,6 +10,8 @@ import { aiAnalysisService } from '@/services/aiAnalysisService'
 import { authService } from '@/services/authService'
 import { databaseService } from '@/services/databaseService'
 import { adminService } from '@/services/adminService'
+import { rankService } from '@/services/rankService'
+import RankBadge from '@/components/RankBadge'
 
 const ModeSelectionPage = () => {
   const navigate = useNavigate()
@@ -32,6 +34,7 @@ const ModeSelectionPage = () => {
   const [sessionOffset, setSessionOffset] = useState(0) // 세션 로드 오프셋
   const [hasMoreSessions, setHasMoreSessions] = useState(true) // 더 많은 세션이 있는지
   const [loadingMore, setLoadingMore] = useState(false) // 추가 로딩 중
+  const [userRank, setUserRank] = useState(1)
   
   // 스와이프 관련 상태
   const [touchStart, setTouchStart] = useState<number | null>(null)
@@ -125,7 +128,16 @@ const ModeSelectionPage = () => {
     }
 
     loadSessions()
+    loadUserRank()
   }, [])
+
+  const loadUserRank = async () => {
+    const user = authService.getCurrentUser()
+    if (user) {
+      const rank = await rankService.getUserRank(user.id)
+      setUserRank(rank)
+    }
+  }
 
   const getExerciseName = (type: ExerciseType): string => {
     return EXERCISE_TYPE_NAMES[type] || '커스텀'
@@ -375,8 +387,9 @@ const ModeSelectionPage = () => {
           <div className="flex items-center gap-3">
             {/* 데스크톱 메뉴 */}
             <div className="hidden md:flex gap-3 items-center">
-              <span className="text-white text-sm">
+              <span className="text-white text-sm flex items-center gap-2">
                 {authService.getCurrentUser()?.name || '사용자'}님
+                <RankBadge rank={userRank} type="user" size="sm" showText={false} />
               </span>
               <button
                 onClick={() => navigate('/settings')}
@@ -395,7 +408,7 @@ const ModeSelectionPage = () => {
               </button>
             </div>
             
-            <NavigationButtons backPath="/home" showHome={true} />
+            <NavigationButtons backPath="/home" showHome={true} showBack={false} />
           </div>
 
           {/* 모바일 햄버거 메뉴 */}

@@ -8,7 +8,9 @@ import { aiAnalysisService } from '@/services/aiAnalysisService'
 import { authService } from '@/services/authService'
 import { databaseService } from '@/services/databaseService'
 import { adminService } from '@/services/adminService'
+import { rankService } from '@/services/rankService'
 import AnimatedBackground from '@/components/AnimatedBackground'
+import RankBadge from '@/components/RankBadge'
 import '@/utils/checkSupabaseData' // 데이터 확인 유틸리티 로드
 
 const HomePage = () => {
@@ -34,6 +36,7 @@ const HomePage = () => {
   // 그래프 오버레이 관련 상태
   const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null)
   const [overlayPosition, setOverlayPosition] = useState<{ x: number; y: number } | null>(null)
+  const [userRank, setUserRank] = useState(1)
 
   const calculateWeeklyData = (sessions: ExerciseSession[]): { 
     date: string
@@ -166,12 +169,19 @@ const HomePage = () => {
     }
   }, [selectedDayIndex])
 
-  // 관리자 체크 및 리다이렉트
+  // 관리자 체크 및 리다이렉트, 계급 로드
   useEffect(() => {
     const user = authService.getCurrentUser()
     if (user && adminService.isAdmin(user)) {
       navigate('/admin/dashboard')
       return
+    }
+    if (user) {
+      const loadUserRank = async () => {
+        const rank = await rankService.getUserRank(user.id)
+        setUserRank(rank)
+      }
+      loadUserRank()
     }
   }, [navigate])
 
@@ -407,8 +417,9 @@ const HomePage = () => {
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-5xl font-bold text-white">헬스팡팡</h1>
           <div className="flex gap-3 items-center">
-            <span className="text-white text-sm">
+            <span className="text-white text-sm flex items-center gap-2">
               {authService.getCurrentUser()?.name || '사용자'}님
+              <RankBadge rank={userRank} type="user" size="sm" showText={false} />
             </span>
             <button
               onClick={() => navigate('/announcements')}

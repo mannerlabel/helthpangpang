@@ -7,6 +7,8 @@ import { ExerciseType, ExerciseConfig, AlarmConfig, Crew } from '@/types'
 import { EXERCISE_TYPES, EXERCISE_TYPE_OPTIONS } from '@/constants/exerciseTypes'
 import { databaseService } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { rankService, USER_RANKS } from '@/services/rankService'
+import Toast, { ToastMessage } from '@/components/Toast'
 
 const CrewCreatePage = () => {
   const navigate = useNavigate()
@@ -16,8 +18,8 @@ const CrewCreatePage = () => {
   
   const [crewName, setCrewName] = useState('')
   const [maxMembers, setMaxMembers] = useState<number | null>(null)
-  const [hasMemberLimit, setHasMemberLimit] = useState(false)
-  const [memberLimit, setMemberLimit] = useState(10)
+  const [hasMemberLimit, setHasMemberLimit] = useState(true) // 기본적으로 제한있음
+  const [memberLimit, setMemberLimit] = useState(5) // 기본 5명 제한
   const [exerciseType, setExerciseType] = useState<ExerciseType>(EXERCISE_TYPES.SQUAT)
   const [sets, setSets] = useState(3)
   const [reps, setReps] = useState(10)
@@ -28,8 +30,25 @@ const CrewCreatePage = () => {
   const [repeatDays, setRepeatDays] = useState<number[]>([])
   const [videoShareEnabled, setVideoShareEnabled] = useState(true)
   const [audioShareEnabled, setAudioShareEnabled] = useState(true)
+  const [userRank, setUserRank] = useState(1)
+  const [toast, setToast] = useState<ToastMessage | null>(null)
 
   const exercises = EXERCISE_TYPE_OPTIONS
+
+  // 사용자 계급 로드 및 인원수 제한 설정
+  useEffect(() => {
+    const loadUserRank = async () => {
+      const user = authService.getCurrentUser()
+      if (user) {
+        const rank = await rankService.getUserRank(user.id)
+        setUserRank(rank)
+        // 계급에 따른 최대 인원수 설정 (5단계부터 자동 증가)
+        const maxMembers = rankService.getMaxMembersByRank(rank, false)
+        setMemberLimit(maxMembers)
+      }
+    }
+    loadUserRank()
+  }, [])
 
   // 수정 모드일 때 기존 데이터 로드
   useEffect(() => {
@@ -87,7 +106,7 @@ const CrewCreatePage = () => {
         // 수정 모드
         await databaseService.updateCrew(crew.id, {
           name: crewName,
-          maxMembers: hasMemberLimit ? (maxMembers || memberLimit) : null,
+          maxMembers: hasMemberLimit ? (maxMembers || memberLimit) : memberLimit,
           exerciseType,
           exerciseConfig: {
             type: config.type,
@@ -102,9 +121,9 @@ const CrewCreatePage = () => {
         alert('크루가 수정되었습니다!')
       } else {
         // 생성 모드
-        await databaseService.createCrew({
+        const newCrew = await databaseService.createCrew({
           name: crewName,
-          maxMembers: hasMemberLimit ? (maxMembers || memberLimit) : null,
+          maxMembers: hasMemberLimit ? (maxMembers || memberLimit) : memberLimit,
           exerciseType,
           exerciseConfig: {
             type: config.type,
@@ -117,6 +136,28 @@ const CrewCreatePage = () => {
           videoShareEnabled,
           audioShareEnabled,
         })
+        
+        // 크루 계급 초기화 (1단계)
+        await rankService.setCrewRank(newCrew.id, 1, false)
+        
+        // 사용자 계급 업데이트 및 승급 확인
+        const rankResult = await rankService.updateUserRank(user.id)
+        if (rankResult.promoted && rankResult.previousRank) {
+          const rankInfo = USER_RANKS.find(r => r.level === rankResult.newRank)
+          if (rankInfo) {
+            setToast({
+              message: `축하드립니다. ${rankResult.newRank}단계로 승급하셨습니다. 더욱 화이팅 해주세요`,
+              type: 'success',
+              duration: 5000
+            })
+            // 토스트 메시지 표시 후 페이지 이동
+            setTimeout(() => {
+              navigate('/crew/my-crews')
+            }, 2000)
+            return
+          }
+        }
+        
         alert('크루가 생성되었습니다!')
       }
       navigate('/crew/my-crews')
@@ -163,7 +204,8 @@ const CrewCreatePage = () => {
             <label className="block text-white text-lg font-semibold mb-2">
               멤버 수
             </label>
-            <div className="flex items-center gap-4 mb-3">
+            {/* 제한없음 버튼 주석처리 - 우선 출력하지 않음 */}
+            {/* <div className="flex items-center gap-4 mb-3">
               <label className="flex items-center gap-2 text-white">
                 <input
                   type="checkbox"
@@ -182,20 +224,26 @@ const CrewCreatePage = () => {
                 />
                 <span>제한있음</span>
               </label>
+            </div> */}
+            {/* 기본적으로 제한있음으로 설정, 계급에 따라 자동으로 제한 설정 */}
+            <div className="flex items-center gap-4">
+              <input
+                type="number"
+                min="2"
+                max={rankService.getMaxMembersByRank(userRank, false)}
+                value={memberLimit}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 5
+                  const maxValue = rankService.getMaxMembersByRank(userRank, false)
+                  setMemberLimit(Math.min(value, maxValue))
+                }}
+                className="w-32 px-4 py-3 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+              />
+              <span className="text-white">명</span>
+              <span className="text-gray-400 text-sm">
+                (최대 {rankService.getMaxMembersByRank(userRank, false)}명, 현재 {userRank}단계)
+              </span>
             </div>
-            {hasMemberLimit && (
-              <div className="flex items-center gap-4">
-                <input
-                  type="number"
-                  min="2"
-                  max="100"
-                  value={memberLimit}
-                  onChange={(e) => setMemberLimit(parseInt(e.target.value) || 10)}
-                  className="w-32 px-4 py-3 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-                <span className="text-white">명</span>
-              </div>
-            )}
           </div>
 
           {/* 종목 */}
@@ -367,6 +415,9 @@ const CrewCreatePage = () => {
           </div>
         </div>
       </div>
+      
+      {/* 토스트 메시지 */}
+      <Toast message={toast} onClose={() => setToast(null)} />
     </div>
   )
 }

@@ -7,6 +7,8 @@ import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { databaseService, CrewMember, User } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { rankService } from '@/services/rankService'
+import RankBadge from '@/components/RankBadge'
 
 interface Participant {
   id: string
@@ -52,6 +54,7 @@ const CrewMeetingView = ({
   const participantVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map())
   const [height, setHeight] = useState(120) // 현재 높이 (px)
   const [isExpanded, setIsExpanded] = useState(false) // 펼쳐진 상태 여부
+  const [userRanks, setUserRanks] = useState<Record<string, number>>({}) // 사용자별 계급 캐시
   
   // 높이 제한: 최소 높이와 최대 높이
   const COLLAPSED_HEIGHT = 120 // 접힌 상태 높이 (핸들바 + 제목)
@@ -59,9 +62,39 @@ const CrewMeetingView = ({
 
   useEffect(() => {
     loadParticipants()
-    const interval = setInterval(loadParticipants, 2000) // 2초마다 갱신
+    loadUserRanks()
+    const interval = setInterval(() => {
+      loadParticipants()
+      loadUserRanks()
+    }, 2000) // 2초마다 갱신
     return () => clearInterval(interval)
   }, [crewId])
+
+  // 사용자 계급 로드
+  const loadUserRanks = async () => {
+    const rankMap: Record<string, number> = {}
+    for (const participant of participants) {
+      if (!userRanks[participant.userId]) { // 캐시에 없을 때만 로드
+        try {
+          const rank = await rankService.getUserRank(participant.userId)
+          rankMap[participant.userId] = rank
+        } catch (error) {
+          console.error(`사용자 ${participant.userId}의 계급 로드 실패:`, error)
+          rankMap[participant.userId] = 1
+        }
+      } else {
+        rankMap[participant.userId] = userRanks[participant.userId]
+      }
+    }
+    setUserRanks(prev => ({ ...prev, ...rankMap }))
+  }
+
+  // 참여자가 변경될 때마다 계급 업데이트
+  useEffect(() => {
+    if (participants.length > 0) {
+      loadUserRanks()
+    }
+  }, [participants.length])
   
   // 디버깅: 활성 사용자 감지 로그
   useEffect(() => {
@@ -616,11 +649,14 @@ const CrewMeetingView = ({
             {/* 영상 또는 플레이스홀더 */}
                     {participant.status === 'inactive' ? (
                       <div className="w-full h-full bg-gray-700 flex items-center justify-center">
-                        <div className="text-center">
-                          <div className="text-5xl mb-3">🚫</div>
-                          <div className="text-gray-400 text-sm font-semibold">미참여</div>
-                          <div className="text-gray-500 text-xs mt-1">{participant.userName}</div>
-                        </div>
+                          <div className="text-center">
+                            <div className="text-5xl mb-3">🚫</div>
+                            <div className="text-gray-400 text-sm font-semibold">미참여</div>
+                            <div className="text-gray-500 text-xs mt-1 flex items-center gap-1 justify-center">
+                              {participant.userName}
+                              <RankBadge rank={userRanks[participant.userId] || 1} type="user" size="sm" showText={false} />
+                            </div>
+                          </div>
                       </div>
                     ) : participant.videoEnabled ? (
                       <div className="w-full h-full bg-gray-700 relative overflow-hidden">
@@ -638,14 +674,20 @@ const CrewMeetingView = ({
                           <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500/20 to-blue-500/20">
                             <div className="text-center">
                               <div className="text-3xl mb-2">📹</div>
-                              <div className="text-gray-300 text-sm font-semibold">{participant.userName}</div>
+                              <div className="text-gray-300 text-sm font-semibold flex items-center gap-1 justify-center">
+                                {participant.userName}
+                                <RankBadge rank={userRanks[participant.userId] || 1} type="user" size="sm" showText={false} />
+                              </div>
                               <div className="text-gray-400 text-xs mt-1">영상 공유 중</div>
                             </div>
                           </div>
                         )}
                         {/* 사용자 이름 오버레이 */}
                         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
-                          <div className="text-white text-sm font-semibold truncate">{participant.userName}</div>
+                          <div className="text-white text-sm font-semibold truncate flex items-center gap-1">
+                            {participant.userName}
+                            <RankBadge rank={userRanks[participant.userId] || 1} type="user" size="sm" showText={false} />
+                          </div>
                         </div>
               </div>
             ) : (
@@ -653,10 +695,16 @@ const CrewMeetingView = ({
                         <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center mb-3">
                           <div className="text-3xl text-white font-bold">{participant.userName.charAt(0)}</div>
                         </div>
-                        <div className="text-gray-300 text-sm font-semibold">{participant.userName}</div>
+                        <div className="text-gray-300 text-sm font-semibold flex items-center gap-1 justify-center">
+                          {participant.userName}
+                          <RankBadge rank={userRanks[participant.userId] || 1} type="user" size="sm" showText={false} />
+                        </div>
                         {/* 사용자 이름 오버레이 */}
                         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
-                          <div className="text-white text-sm font-semibold truncate">{participant.userName}</div>
+                          <div className="text-white text-sm font-semibold truncate flex items-center gap-1">
+                            {participant.userName}
+                            <RankBadge rank={userRanks[participant.userId] || 1} type="user" size="sm" showText={false} />
+                          </div>
                         </div>
               </div>
             )}

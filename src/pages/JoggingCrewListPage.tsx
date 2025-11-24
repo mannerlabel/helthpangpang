@@ -5,7 +5,10 @@ import AnimatedBackground from '@/components/AnimatedBackground'
 import NavigationButtons from '@/components/NavigationButtons'
 import { databaseService, JoggingCrew } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { rankService, CREW_RANKS } from '@/services/rankService'
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
+import Toast, { ToastMessage } from '@/components/Toast'
+import RankBadge from '@/components/RankBadge'
 
 const JoggingCrewListPage = () => {
   const navigate = useNavigate()
@@ -17,11 +20,24 @@ const JoggingCrewListPage = () => {
   const [hasCancelledMap, setHasCancelledMap] = useState<Record<string, boolean>>({})
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({})
   const [pagination, setPagination] = useState({ offset: 0, hasMore: true, loading: false })
+  const [crewRanks, setCrewRanks] = useState<Record<string, number>>({})
+  const [userRank, setUserRank] = useState(1)
+  const [toast, setToast] = useState<ToastMessage | null>(null)
+  const [creatorRanks, setCreatorRanks] = useState<Record<string, number>>({}) // 캡틴 계급
   const PAGE_SIZE = 20
 
   useEffect(() => {
     loadMyCrews(true)
+    loadUserRank()
   }, [])
+
+  const loadUserRank = async () => {
+    const user = authService.getCurrentUser()
+    if (user) {
+      const rank = await rankService.getUserRank(user.id)
+      setUserRank(rank)
+    }
+  }
 
   // location이 변경될 때마다 목록 다시 로드 (생성/수정 후 돌아올 때)
   useEffect(() => {
@@ -48,34 +64,64 @@ const JoggingCrewListPage = () => {
         setMyCrews(prev => [...prev, ...result.data])
       }
       
-      // 각 크루에 대해 추천 여부 확인 및 생성자 정보 가져오기
+      // 각 크루에 대해 추천 여부 확인 및 생성자 정보 가져오기, 계급 확인
       const recommendedMap: Record<string, boolean> = {}
       const cancelledMap: Record<string, boolean> = {}
       const creatorNameMap: Record<string, string> = {}
+      const rankMap: Record<string, number> = {}
       for (const crew of result.data) {
         const hasRecommended = await databaseService.hasUserRecommendedJoggingCrew(crew.id, user.id)
         const hasCancelled = await databaseService.hasUserCancelledJoggingCrewRecommendation(crew.id, user.id)
         recommendedMap[crew.id] = hasRecommended
         cancelledMap[crew.id] = hasCancelled
         
-        // 생성자 정보 가져오기
+        // 생성자 정보 가져오기 및 계급 확인
         try {
           const creator = await databaseService.getUserById(crew.createdBy)
           if (creator) {
             creatorNameMap[crew.id] = creator.name
+            // 생성자 계급 가져오기
+            const creatorRank = await rankService.getUserRank(crew.createdBy)
+            rankMap[crew.id] = creatorRank
           }
         } catch (error) {
           console.error(`조깅 크루 ${crew.id}의 생성자 정보 가져오기 실패:`, error)
+        }
+        
+        // 조깅 크루 계급 확인 및 업데이트
+        try {
+          const currentRank = await rankService.getCrewRank(crew.id, true)
+          const rankResult = await rankService.updateCrewRank(crew.id, true)
+          rankMap[crew.id] = rankResult.newRank
+          
+          // 조깅 크루 승급 확인
+          if (rankResult.promoted && rankResult.previousRank) {
+            const rankInfo = CREW_RANKS.find(r => r.level === rankResult.newRank)
+            if (rankInfo) {
+              setToast({
+                message: `우리 ${crew.name} 조깅크루가 ${rankResult.newRank}단계로 승급되었습니다. 모두들 더욱 화이팅 해주세요`,
+                type: 'success',
+                duration: 5000
+              })
+            }
+          }
+        } catch (error) {
+          console.error(`조깅 크루 ${crew.id}의 계급 확인 실패:`, error)
+          rankMap[crew.id] = 1
         }
       }
       if (reset) {
         setHasRecommendedMap(recommendedMap)
         setHasCancelledMap(cancelledMap)
         setCreatorMap(creatorNameMap)
+        setCrewRanks(rankMap)
+        setCreatorRanks(rankMap) // 캡틴 계급 저장
       } else {
         setHasRecommendedMap(prev => ({ ...prev, ...recommendedMap }))
         setHasCancelledMap(prev => ({ ...prev, ...cancelledMap }))
         setCreatorMap(prev => ({ ...prev, ...creatorNameMap }))
+        setCrewRanks(prev => ({ ...prev, ...rankMap }))
+        setCreatorRanks(prev => ({ ...prev, ...rankMap })) // 캡틴 계급 저장
       }
       
       setPagination({ 
@@ -326,6 +372,7 @@ const JoggingCrewListPage = () => {
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
                       <h3 className="text-2xl font-bold text-white">{crew.name}</h3>
+                      <RankBadge rank={crewRanks[crew.id] || 1} type="crew" size="sm" showText={true} />
                       <div className="flex items-center gap-2">
                         {crew.videoShareEnabled && (
                           <span
@@ -348,7 +395,12 @@ const JoggingCrewListPage = () => {
                     <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm mb-2">
                       <div>
                         <span className="text-gray-400">캡틴:</span>
-                        <span className="text-white ml-2">{creatorMap[crew.id] ? `${creatorMap[crew.id]}님` : '알 수 없음'}</span>
+                        <span className="text-white ml-2 flex items-center gap-1">
+                          {creatorMap[crew.id] ? `${creatorMap[crew.id]}님` : '알 수 없음'}
+                          {creatorMap[crew.id] && creatorRanks[crew.id] && (
+                            <RankBadge rank={creatorRanks[crew.id]} type="user" size="sm" showText={true} />
+                          )}
+                        </span>
                       </div>
                       <div>
                         <span className="text-gray-400">운동 설정:</span>
@@ -444,6 +496,9 @@ const JoggingCrewListPage = () => {
           </div>
         )}
       </div>
+      
+      {/* 토스트 메시지 */}
+      <Toast message={toast} onClose={() => setToast(null)} />
     </div>
   )
 }

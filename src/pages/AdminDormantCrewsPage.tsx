@@ -6,6 +6,8 @@ import NavigationButtons from '@/components/NavigationButtons'
 import { authService } from '@/services/authService'
 import { adminService } from '@/services/adminService'
 import { databaseService, Crew, JoggingCrew } from '@/services/databaseService'
+import { rankService } from '@/services/rankService'
+import RankBadge from '@/components/RankBadge'
 
 const AdminDormantCrewsPage = () => {
   const navigate = useNavigate()
@@ -16,6 +18,8 @@ const AdminDormantCrewsPage = () => {
   const [sortBy, setSortBy] = useState<'name' | 'dormantAt' | 'createdAt'>('dormantAt')
   const [loading, setLoading] = useState(true)
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({})
+  const [creatorRanks, setCreatorRanks] = useState<Record<string, number>>({}) // 생성자 계급
+  const [crewRanks, setCrewRanks] = useState<Record<string, number>>({}) // 크루 계급
 
   useEffect(() => {
     const user = authService.getCurrentUser()
@@ -35,36 +39,56 @@ const AdminDormantCrewsPage = () => {
         const dormantCrews = await adminService.getDormantCrews()
         setCrews(dormantCrews)
         
-        // 생성자 정보 가져오기
+        // 생성자 정보 가져오기 및 계급 확인
         const creatorMap: Record<string, string> = {}
+        const creatorRankMap: Record<string, number> = {}
+        const crewRankMap: Record<string, number> = {}
         for (const crew of dormantCrews) {
           try {
             const creator = await databaseService.getUserById(crew.createdBy)
             if (creator) {
               creatorMap[crew.id] = creator.name
+              // 생성자 계급 가져오기
+              const creatorRank = await rankService.getUserRank(crew.createdBy)
+              creatorRankMap[crew.id] = creatorRank
             }
+            // 크루 계급 가져오기
+            const crewRank = await rankService.getCrewRank(crew.id, false)
+            crewRankMap[crew.id] = crewRank
           } catch (error) {
             console.error(`크루 ${crew.id}의 생성자 정보 가져오기 실패:`, error)
           }
         }
         setCreatorMap(creatorMap)
+        setCreatorRanks(creatorRankMap)
+        setCrewRanks(crewRankMap)
       } else {
         const dormantJoggingCrews = await adminService.getDormantJoggingCrews()
         setJoggingCrews(dormantJoggingCrews)
         
-        // 생성자 정보 가져오기
+        // 생성자 정보 가져오기 및 계급 확인
         const creatorMap: Record<string, string> = {}
+        const creatorRankMap: Record<string, number> = {}
+        const crewRankMap: Record<string, number> = {}
         for (const crew of dormantJoggingCrews) {
           try {
             const creator = await databaseService.getUserById(crew.createdBy)
             if (creator) {
               creatorMap[crew.id] = creator.name
+              // 생성자 계급 가져오기
+              const creatorRank = await rankService.getUserRank(crew.createdBy)
+              creatorRankMap[crew.id] = creatorRank
             }
+            // 조깅 크루 계급 가져오기
+            const crewRank = await rankService.getCrewRank(crew.id, true)
+            crewRankMap[crew.id] = crewRank
           } catch (error) {
             console.error(`조깅 크루 ${crew.id}의 생성자 정보 가져오기 실패:`, error)
           }
         }
         setCreatorMap(creatorMap)
+        setCreatorRanks(creatorRankMap)
+        setCrewRanks(crewRankMap)
       }
     } catch (error) {
       console.error('휴면 크루 로드 실패:', error)
@@ -240,7 +264,12 @@ const AdminDormantCrewsPage = () => {
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                       <div className="flex-1">
                         <div className="flex items-center gap-3 mb-2">
-                          <h3 className="text-xl font-bold text-white">{crew.name}</h3>
+                          <h3 className="text-xl font-bold text-white flex items-center gap-1">
+                            {crew.name}
+                            {crewRanks[crew.id] && (
+                              <RankBadge rank={crewRanks[crew.id]} type={activeTab === 'crew' ? 'crew' : 'crew'} size="sm" showText={true} />
+                            )}
+                          </h3>
                           <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs rounded">
                             휴면
                           </span>
@@ -251,7 +280,12 @@ const AdminDormantCrewsPage = () => {
                           )}
                         </div>
                         <div className="text-sm text-gray-400 space-y-1">
-                          <div>생성자: {creatorMap[crew.id] || '알 수 없음'}</div>
+                          <div className="flex items-center gap-1">
+                            생성자: {creatorMap[crew.id] || '알 수 없음'}
+                            {creatorMap[crew.id] && creatorRanks[crew.id] && (
+                              <RankBadge rank={creatorRanks[crew.id]} type="user" size="sm" showText={true} />
+                            )}
+                          </div>
                           <div>생성일: {formatDate(crew.createdAt)}</div>
                           <div>휴면 지정일: {formatDate(crew.dormantAt)}</div>
                           <div>마지막 활동: {formatDate(crew.lastActivityAt)}</div>

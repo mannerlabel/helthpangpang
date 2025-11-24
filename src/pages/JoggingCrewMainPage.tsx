@@ -1,10 +1,26 @@
 import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import NavigationButtons from '@/components/NavigationButtons'
+import { authService } from '@/services/authService'
+import { rankService } from '@/services/rankService'
+import RankBadge from '@/components/RankBadge'
 
 const JoggingCrewMainPage = () => {
   const navigate = useNavigate()
+  const [userRank, setUserRank] = useState(1)
+
+  useEffect(() => {
+    const loadUserRank = async () => {
+      const user = authService.getCurrentUser()
+      if (user) {
+        const rank = await rankService.getUserRank(user.id)
+        setUserRank(rank)
+      }
+    }
+    loadUserRank()
+  }, [])
 
   const menuItems = [
     {

@@ -2053,6 +2053,13 @@ class DatabaseService {
               last_activity_at: new Date().toISOString(), // 활동 시간 업데이트
             })
             .eq('id', crewId)
+          
+          // 크루 계급 업데이트 (비동기, 에러가 나도 계속 진행)
+          import('@/services/rankService').then(({ rankService }) => {
+            rankService.updateCrewRank(crewId, false).catch(err => {
+              console.warn('크루 계급 업데이트 실패:', err)
+            })
+          })
         } catch (updateError: any) {
           console.warn('크루 멤버 수 업데이트 실패:', updateError)
           // current_members만 업데이트 시도
@@ -2110,6 +2117,13 @@ class DatabaseService {
       await this.updateCrew(crewId, {
         currentMembers: actualMemberCount,
         memberIds: actualMemberIds,
+      })
+
+      // 크루 계급 업데이트 (비동기, 에러가 나도 계속 진행)
+      import('@/services/rankService').then(({ rankService }) => {
+        rankService.updateCrewRank(crewId, false).catch(err => {
+          console.warn('크루 계급 업데이트 실패:', err)
+        })
       })
 
     return newMember
@@ -2676,6 +2690,13 @@ class DatabaseService {
           currentMembers: crew.currentMembers + 1,
           memberIds: updatedMemberIds,
           lastActivityAt: Date.now(),
+        })
+        
+        // 조깅 크루 계급 업데이트 (비동기, 에러가 나도 계속 진행)
+        import('@/services/rankService').then(({ rankService }) => {
+          rankService.updateCrewRank(crewId, true).catch(err => {
+            console.warn('조깅 크루 계급 업데이트 실패:', err)
+          })
         })
         
         console.log('조깅 크루 참여 성공')

@@ -5,7 +5,9 @@ import AnimatedBackground from '@/components/AnimatedBackground'
 import NavigationButtons from '@/components/NavigationButtons'
 import { databaseService, JoggingCrew } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { rankService } from '@/services/rankService'
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
+import RankBadge from '@/components/RankBadge'
 
 const JoggingCrewSearchPage = () => {
   const navigate = useNavigate()
@@ -18,11 +20,23 @@ const JoggingCrewSearchPage = () => {
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({})
   const [pagination, setPagination] = useState({ offset: 0, hasMore: true, loading: false })
   const [allCrews, setAllCrews] = useState<JoggingCrew[]>([])
+  const [crewRanks, setCrewRanks] = useState<Record<string, number>>({})
+  const [userRank, setUserRank] = useState(1)
+  const [creatorRanks, setCreatorRanks] = useState<Record<string, number>>({}) // 캡틴 계급
   const PAGE_SIZE = 20
 
   useEffect(() => {
     loadCrews(true)
+    loadUserRank()
   }, [searchTerm, sortBy])
+
+  const loadUserRank = async () => {
+    const user = authService.getCurrentUser()
+    if (user) {
+      const rank = await rankService.getUserRank(user.id)
+      setUserRank(rank)
+    }
+  }
 
   const loadCrews = async (reset: boolean = false) => {
     try {
@@ -57,10 +71,11 @@ const JoggingCrewSearchPage = () => {
         setAllCrews(prev => [...prev, ...availableCrews])
       }
 
-      // 각 크루에 대해 추천 여부 확인 및 생성자 정보 가져오기
+      // 각 크루에 대해 추천 여부 확인 및 생성자 정보 가져오기, 계급 확인
       const recommendedMap: Record<string, boolean> = {}
       const cancelledMap: Record<string, boolean> = {}
       const creatorNameMap: Record<string, string> = {}
+      const rankMap: Record<string, number> = {}
       if (user) {
         for (const crew of availableCrews) {
           const hasRecommended = await databaseService.hasUserRecommendedJoggingCrew(crew.id, user.id)
@@ -68,14 +83,26 @@ const JoggingCrewSearchPage = () => {
           recommendedMap[crew.id] = hasRecommended
           cancelledMap[crew.id] = hasCancelled
           
-          // 생성자 정보 가져오기
+          // 생성자 정보 가져오기 및 계급 확인
           try {
             const creator = await databaseService.getUserById(crew.createdBy)
             if (creator) {
               creatorNameMap[crew.id] = creator.name
+              // 생성자 계급 가져오기
+              const creatorRank = await rankService.getUserRank(crew.createdBy)
+              rankMap[crew.id] = creatorRank
             }
           } catch (error) {
             console.error(`조깅 크루 ${crew.id}의 생성자 정보 가져오기 실패:`, error)
+          }
+          
+          // 조깅 크루 계급 확인
+          try {
+            const rank = await rankService.getCrewRank(crew.id, true)
+            rankMap[crew.id] = rank
+          } catch (error) {
+            console.error(`조깅 크루 ${crew.id}의 계급 확인 실패:`, error)
+            rankMap[crew.id] = 1
           }
         }
       } else {
@@ -85,9 +112,21 @@ const JoggingCrewSearchPage = () => {
             const creator = await databaseService.getUserById(crew.createdBy)
             if (creator) {
               creatorNameMap[crew.id] = creator.name
+              // 생성자 계급 가져오기
+              const creatorRank = await rankService.getUserRank(crew.createdBy)
+              rankMap[crew.id] = creatorRank
             }
           } catch (error) {
             console.error(`조깅 크루 ${crew.id}의 생성자 정보 가져오기 실패:`, error)
+          }
+          
+          // 조깅 크루 계급 확인
+          try {
+            const rank = await rankService.getCrewRank(crew.id, true)
+            rankMap[crew.id] = rank
+          } catch (error) {
+            console.error(`조깅 크루 ${crew.id}의 계급 확인 실패:`, error)
+            rankMap[crew.id] = 1
           }
         }
       }
@@ -95,10 +134,14 @@ const JoggingCrewSearchPage = () => {
         setHasRecommendedMap(recommendedMap)
         setHasCancelledMap(cancelledMap)
         setCreatorMap(creatorNameMap)
+        setCrewRanks(rankMap)
+        setCreatorRanks(rankMap) // 캡틴 계급 저장
       } else {
         setHasRecommendedMap(prev => ({ ...prev, ...recommendedMap }))
         setHasCancelledMap(prev => ({ ...prev, ...cancelledMap }))
         setCreatorMap(prev => ({ ...prev, ...creatorNameMap }))
+        setCrewRanks(prev => ({ ...prev, ...rankMap }))
+        setCreatorRanks(prev => ({ ...prev, ...rankMap })) // 캡틴 계급 저장
       }
 
       setPagination({ 
@@ -344,6 +387,7 @@ const JoggingCrewSearchPage = () => {
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
                       <h3 className="text-2xl font-bold text-white">{crew.name}</h3>
+                      <RankBadge rank={crewRanks[crew.id] || 1} type="crew" size="sm" showText={true} />
                       <div className="flex items-center gap-2">
                         {crew.videoShareEnabled && (
                           <span
@@ -366,7 +410,12 @@ const JoggingCrewSearchPage = () => {
                     <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm mb-2">
                       <div>
                         <span className="text-gray-400">캡틴:</span>
-                        <span className="text-white ml-2">{creatorMap[crew.id] ? `${creatorMap[crew.id]}님` : '알 수 없음'}</span>
+                        <span className="text-white ml-2 flex items-center gap-1">
+                          {creatorMap[crew.id] ? `${creatorMap[crew.id]}님` : '알 수 없음'}
+                          {creatorMap[crew.id] && creatorRanks[crew.id] && (
+                            <RankBadge rank={creatorRanks[crew.id]} type="user" size="sm" showText={true} />
+                          )}
+                        </span>
                       </div>
                       <div>
                         <span className="text-gray-400">운동 설정:</span>

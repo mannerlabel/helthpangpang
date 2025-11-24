@@ -7,6 +7,8 @@ import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { databaseService, ChatMessage } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { rankService } from '@/services/rankService'
+import RankBadge from '@/components/RankBadge'
 
 interface CrewChatPanelProps {
   crewId: string
@@ -38,6 +40,7 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
   const previousMessageIdsRef = useRef<Set<string>>(new Set()) // 이전 메시지 ID 추적
   const currentUserIdRef = useRef<string | null>(null)
   const lastReadMessageIdRef = useRef<string | null>(null) // 마지막으로 읽은 메시지 ID
+  const [userRanks, setUserRanks] = useState<Record<string, number>>({}) // 사용자별 계급 캐시
 
   useEffect(() => {
     // 현재 사용자 ID 저장
@@ -59,6 +62,41 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
       return () => clearInterval(interval)
     }
   }, [isOpen, crewId])
+
+  // 사용자 계급 로드
+  const loadUserRanks = async (messageList: ChatMessage[]) => {
+    const allUserIds = new Set<string>()
+    messageList.forEach(msg => {
+      if (msg.userId && msg.userId !== 'system') {
+        allUserIds.add(msg.userId)
+      }
+    })
+    
+    const rankMap: Record<string, number> = {}
+    for (const userId of allUserIds) {
+      if (!userRanks[userId]) { // 캐시에 없을 때만 로드
+        try {
+          const rank = await rankService.getUserRank(userId)
+          rankMap[userId] = rank
+        } catch (error) {
+          console.error(`사용자 ${userId}의 계급 로드 실패:`, error)
+          rankMap[userId] = 1
+        }
+      } else {
+        rankMap[userId] = userRanks[userId]
+      }
+    }
+    if (Object.keys(rankMap).length > 0) {
+      setUserRanks(prev => ({ ...prev, ...rankMap }))
+    }
+  }
+
+  // 메시지가 변경될 때마다 계급 업데이트
+  useEffect(() => {
+    if (messages.length > 0) {
+      loadUserRanks(messages)
+    }
+  }, [messages.length])
 
   // 새 메시지 감지 및 알림
   useEffect(() => {
@@ -471,8 +509,9 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
                           )}
                           <div className={`max-w-[70%] ${isMe ? 'order-2' : ''}`}>
                         {!isMe && (
-                              <div className="text-xs text-gray-600 mb-1 px-1">
+                              <div className="text-xs text-gray-600 mb-1 px-1 flex items-center gap-1">
                             {message.userName}
+                            <RankBadge rank={userRanks[message.userId] || 1} type="user" size="sm" showText={false} />
                           </div>
                         )}
                             <div
