@@ -167,78 +167,80 @@ const CrewMeetingView = ({
       }
 
       // Supabase에서 실제 활성 사용자 확인
-      // video_enabled가 true인 사용자는 모두 활성으로 간주
-      // (TrainingPage에서 5초마다 video_enabled를 true로 업데이트하므로, 
-      //  true면 현재 TrainingPage에 있는 것으로 간주)
-      try {
-        const { supabase } = await import('@/services/supabaseClient')
-        if (supabase) {
-          // crew_members 또는 jogging_crew_members 테이블에서 해당 크루의 모든 멤버 조회
-          const tableName = crewType === 'jogging' ? 'jogging_crew_members' : 'crew_members'
-          const { data: allMembers, error } = await supabase
-            .from(tableName)
-            .select('user_id, video_enabled, audio_enabled')
-            .eq('crew_id', crewId)
-          
-          if (error) {
-            console.error('Supabase 멤버 조회 에러:', error)
-          }
-          
-          if (allMembers) {
-            console.log('Supabase에서 조회한 멤버:', allMembers)
+      // 조깅 크루는 jogging_crew_members 테이블이 없으므로 crew_members 테이블만 사용
+      if (crewType !== 'jogging') {
+        try {
+          const { supabase } = await import('@/services/supabaseClient')
+          if (supabase) {
+            // crew_members 테이블에서 해당 크루의 모든 멤버 조회
+            const { data: allMembers, error } = await supabase
+              .from('crew_members')
+              .select('user_id, video_enabled, audio_enabled')
+              .eq('crew_id', crewId)
             
-            // video_enabled가 true인 사용자는 모두 활성으로 간주
-            for (const member of allMembers) {
-              if (member.video_enabled === true) {
-                // UUID를 그대로 activeUserIds에 추가
-                activeUserIds.add(member.user_id)
-                console.log('✅ 활성 사용자 추가 (video_enabled=true):', member.user_id)
-                
-                // localStorage ID도 추가하기 위해 email로 매핑
-                try {
-                  const { data: supabaseUser, error: userError } = await supabase
-                    .from('users')
-                    .select('email')
-                    .eq('id', member.user_id)
-                    .single()
+            if (error) {
+              console.error('Supabase 멤버 조회 에러:', error)
+            }
+            
+            if (allMembers) {
+              console.log('Supabase에서 조회한 멤버:', allMembers)
+              
+              // video_enabled가 true인 사용자는 모두 활성으로 간주
+              for (const member of allMembers) {
+                if (member.video_enabled === true) {
+                  // UUID를 그대로 activeUserIds에 추가
+                  activeUserIds.add(member.user_id)
+                  console.log('✅ 활성 사용자 추가 (video_enabled=true):', member.user_id)
                   
-                  if (userError) {
-                    console.error('사용자 조회 에러:', userError)
-                  }
-                  
-                  if (supabaseUser) {
-                    // localStorage에서 email로 사용자 찾기
-                    const localStorageKeys = Object.keys(localStorage)
-                    for (const key of localStorageKeys) {
-                      if (key.startsWith('user_')) {
-                        try {
-                          const userData = JSON.parse(localStorage.getItem(key) || '{}')
-                          if (userData.email === supabaseUser.email) {
-                            // localStorage ID도 추가 (현재 브라우저/탭의 사용자 확인용)
-                            const localStorageId = key.replace('user_', '')
-                            activeUserIds.add(localStorageId)
-                            console.log('✅ UUID->localStorage 매핑:', member.user_id, '->', localStorageId)
-                            break
+                  // localStorage ID도 추가하기 위해 email로 매핑
+                  try {
+                    const { data: supabaseUser, error: userError } = await supabase
+                      .from('users')
+                      .select('email')
+                      .eq('id', member.user_id)
+                      .single()
+                    
+                    if (userError) {
+                      console.error('사용자 조회 에러:', userError)
+                    }
+                    
+                    if (supabaseUser) {
+                      // localStorage에서 email로 사용자 찾기
+                      const localStorageKeys = Object.keys(localStorage)
+                      for (const key of localStorageKeys) {
+                        if (key.startsWith('user_')) {
+                          try {
+                            const userData = JSON.parse(localStorage.getItem(key) || '{}')
+                            if (userData.email === supabaseUser.email) {
+                              // localStorage ID도 추가 (현재 브라우저/탭의 사용자 확인용)
+                              const localStorageId = key.replace('user_', '')
+                              activeUserIds.add(localStorageId)
+                              console.log('✅ UUID->localStorage 매핑:', member.user_id, '->', localStorageId)
+                              break
+                            }
+                          } catch (e) {
+                            // 무시
                           }
-                        } catch (e) {
-                          // 무시
                         }
                       }
                     }
+                  } catch (e) {
+                    console.error('사용자 매핑 실패:', e)
                   }
-                } catch (e) {
-                  console.error('사용자 매핑 실패:', e)
+                } else {
+                  console.log('❌ 비활성 멤버 (video_enabled=false):', member.user_id)
                 }
-              } else {
-                console.log('❌ 비활성 멤버 (video_enabled=false):', member.user_id)
               }
+            } else {
+              console.log('⚠️ Supabase에서 멤버를 찾을 수 없음')
             }
-          } else {
-            console.log('⚠️ Supabase에서 멤버를 찾을 수 없음')
           }
+        } catch (e) {
+          console.error('Supabase 활성 사용자 조회 실패:', e)
         }
-      } catch (e) {
-        console.error('Supabase 활성 사용자 조회 실패:', e)
+      } else {
+        // 조깅 크루의 경우 localStorage 세션만 사용 (jogging_crew_members 테이블이 없음)
+        console.log('조깅 크루: localStorage 세션만 사용하여 활성 사용자 확인')
       }
       
       console.log('활성 사용자 ID 목록 (Supabase 조회 후):', Array.from(activeUserIds))

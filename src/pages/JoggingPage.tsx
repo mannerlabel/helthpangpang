@@ -129,21 +129,8 @@ const JoggingPage = () => {
               }
             }
 
-            // jogging_crew_members 테이블이 있다면 업데이트
-            // 없으면 무시 (에러 발생 시 무시)
-            try {
-              await supabase
-                .from('jogging_crew_members')
-                .update({ 
-                  video_enabled: true,
-                  audio_enabled: myAudioEnabled,
-                })
-                .eq('crew_id', crewId)
-                .eq('user_id', supabaseUserId)
-            } catch (e) {
-              // 테이블이 없으면 무시
-              console.log('jogging_crew_members 테이블이 없거나 업데이트 실패 (무시):', e)
-            }
+            // 조깅 크루는 jogging_crew_members 테이블이 없으므로 업데이트하지 않음
+            // 활성 세션은 localStorage만 사용
           }
         } catch (e) {
           console.error('Supabase 활성 세션 업데이트 실패:', e)
@@ -194,18 +181,8 @@ const JoggingPage = () => {
                   }
                 }
                 
-                try {
-                  await supabase
-                    .from('jogging_crew_members')
-                    .update({ 
-                      video_enabled: false,
-                      audio_enabled: false,
-                    })
-                    .eq('crew_id', crewId)
-                    .eq('user_id', supabaseUserId)
-                } catch (e) {
-                  // 테이블이 없으면 무시
-                }
+                // 조깅 크루는 jogging_crew_members 테이블이 없으므로 업데이트하지 않음
+                // 활성 세션은 localStorage만 사용
               }
             } catch (e) {
               // 무시
