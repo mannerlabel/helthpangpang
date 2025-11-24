@@ -35,7 +35,7 @@ const ResultPage = () => {
   // 스와이프 관련 상태
   const [touchStart, setTouchStart] = useState<number | null>(null)
   const [touchEnd, setTouchEnd] = useState<number | null>(null)
-  
+
   // 중복 저장 방지: 저장 완료 여부 추적
   const isSavingRef = useRef(false)
   const savedSessionIdRef = useRef<string | null>(null)
@@ -409,7 +409,7 @@ const ResultPage = () => {
 
     // 세션이 변경되고 아직 저장되지 않은 경우에만 실행
     if (session && savedSessionIdRef.current !== session.id && !isSavingRef.current && !isFetchingAnalysisRef.current) {
-      fetchAnalysis()
+    fetchAnalysis()
     }
     
     // cleanup 함수: 컴포넌트 언마운트 시 플래그 리셋

@@ -336,16 +336,21 @@ const JoggingPage = () => {
   }
 
   const formatTime = (ms: number): string => {
-    const seconds = Math.floor(ms / 1000)
-    const minutes = Math.floor(seconds / 60)
-    const hours = Math.floor(minutes / 60)
+    // NaN이나 0 이하 값 처리
+    if (!ms || isNaN(ms) || ms < 0) {
+      return '00:00'
+    }
+    
+    const totalSeconds = Math.floor(ms / 1000)
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = totalSeconds % 60
+    
     // 시간이 1시간 이상일 때만 시간 표시, 그 외에는 MM:SS 형식
     if (hours > 0) {
-    return `${hours.toString().padStart(2, '0')}:${(minutes % 60)
-      .toString()
-      .padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
     } else {
-      return `${minutes.toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`
+      return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
     }
   }
 
@@ -536,10 +541,10 @@ const JoggingPage = () => {
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: 0.2 }}
-                className="bg-black/30 backdrop-blur-md rounded-3xl p-5 text-center border border-white/10 overflow-hidden"
+                className="bg-black/30 backdrop-blur-md rounded-3xl p-5 text-center border border-white/10"
               >
                 <div className="text-xs text-white/60 mb-2 font-medium uppercase tracking-wider">시간</div>
-                <div className="text-lg font-bold text-yellow-400 mb-1 tabular-nums font-mono truncate px-1">
+                <div className="text-2xl font-bold text-yellow-400 mb-1 tabular-nums font-mono">
                   {formatTime(joggingData.averageTime)}
                 </div>
                 <div className="text-xs text-white/50 uppercase">경과</div>
@@ -553,7 +558,7 @@ const JoggingPage = () => {
                 animate={{ opacity: 1, y: 0 }}
                 className="bg-black/30 backdrop-blur-md rounded-3xl p-6 border border-white/10"
               >
-                <div className="flex justify-between items-center mb-4">
+                <div className="flex justify-between items-center mb-2">
                   <h3 className="text-xl font-bold text-white">경로 정보</h3>
                   <button
                     onClick={() => {
@@ -567,6 +572,9 @@ const JoggingPage = () => {
                     {routeExpanded ? '접기' : '펼침목록보기'}
                   </button>
                 </div>
+                <p className="text-xs text-white/50 mb-3">
+                  위치 기록은 30초 간격으로 이루어 집니다.
+                </p>
                 <p className="text-gray-300 mb-4">
                   기록된 위치 포인트: {joggingData.route.length}개
                 </p>

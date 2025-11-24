@@ -52,7 +52,7 @@ const JoggingCrewListPage = () => {
       if (location.state?.reload) {
         // 이미 로드 중이 아닐 때만 실행
         if (!pagination.loading) {
-          loadMyCrews(true)
+    loadMyCrews(true)
         }
       }
     }
@@ -296,10 +296,10 @@ const JoggingCrewListPage = () => {
         // 추천수 업데이트를 위해 조깅 크루 정보만 다시 가져오기 (비동기, UI 블로킹 없음)
         databaseService.getJoggingCrewById(crew.id)
           .then(updatedCrew => {
-            if (updatedCrew) {
+          if (updatedCrew) {
               // 해당 조깅 크루만 목록에서 업데이트 (추천수 반영)
               setMyCrews(prev => prev.map(c => c.id === crew.id ? { ...updatedCrew, recommendations: result.recommendations } : c))
-            }
+          }
           })
           .catch(loadError => {
             // 조깅 크루 정보 가져오기 실패해도 추천수는 result에서 받았으므로 업데이트
