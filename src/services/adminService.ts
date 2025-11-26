@@ -34,6 +34,18 @@ export interface DashboardStats {
   crewDeletionStats: Array<{ date: string; count: number }>
 }
 
+export interface ApiKey {
+  id: string
+  keyType: 'llm' | 'weather'
+  apiKey: string
+  description: string | null
+  isActive: boolean
+  createdAt: number
+  updatedAt: number
+  createdBy: string | null
+  updatedBy: string | null
+}
+
 class AdminService {
   // 관리자 권한 확인
   isAdmin(user: User | null): boolean {
@@ -1069,6 +1081,165 @@ class AdminService {
     } catch (error: any) {
       console.error('계정 완전 삭제 중 오류:', error)
       return { success: false, error: error.message || '계정 삭제 중 오류가 발생했습니다.' }
+    }
+  }
+
+  // ==================== API Key 관리 ====================
+
+  // 모든 API Key 조회
+  async getAllApiKeys(): Promise<ApiKey[]> {
+    try {
+      const { data, error } = await supabase
+        .from('api_keys')
+        .select('*')
+        .order('key_type', { ascending: true })
+
+      if (error) {
+        console.error('API Key 조회 실패:', error)
+        return []
+      }
+
+      return (data || []).map((item) => ({
+        id: item.id,
+        keyType: item.key_type,
+        apiKey: item.api_key,
+        description: item.description,
+        isActive: item.is_active,
+        createdAt: item.created_at,
+        updatedAt: item.updated_at,
+        createdBy: item.created_by,
+        updatedBy: item.updated_by,
+      }))
+    } catch (error: any) {
+      console.error('API Key 조회 중 오류:', error)
+      return []
+    }
+  }
+
+  // 특정 타입의 API Key 조회
+  async getApiKey(keyType: 'llm' | 'weather'): Promise<string | null> {
+    try {
+      const { data, error } = await supabase
+        .from('api_keys')
+        .select('api_key, is_active')
+        .eq('key_type', keyType)
+        .eq('is_active', true)
+        .single()
+
+      if (error || !data) {
+        console.warn(`API Key 조회 실패 (${keyType}):`, error)
+        return null
+      }
+
+      return data.api_key || null
+    } catch (error: any) {
+      console.error(`API Key 조회 중 오류 (${keyType}):`, error)
+      return null
+    }
+  }
+
+  // API Key 생성 또는 업데이트
+  async upsertApiKey(
+    keyType: 'llm' | 'weather',
+    apiKey: string,
+    description?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const user = authService.getCurrentUser()
+      if (!user) {
+        return { success: false, error: '로그인이 필요합니다.' }
+      }
+
+      const { error } = await supabase
+        .from('api_keys')
+        .upsert(
+          {
+            key_type: keyType,
+            api_key: apiKey,
+            description: description || null,
+            is_active: true,
+            updated_by: user.id,
+          },
+          {
+            onConflict: 'key_type',
+          }
+        )
+
+      if (error) {
+        console.error('API Key 저장 실패:', error)
+        return { success: false, error: error.message }
+      }
+
+      return { success: true }
+    } catch (error: any) {
+      console.error('API Key 저장 중 오류:', error)
+      return { success: false, error: error.message || 'API Key 저장 중 오류가 발생했습니다.' }
+    }
+  }
+
+  // API Key 업데이트
+  async updateApiKey(
+    id: string,
+    updates: {
+      apiKey?: string
+      description?: string
+      isActive?: boolean
+    }
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const user = authService.getCurrentUser()
+      if (!user) {
+        return { success: false, error: '로그인이 필요합니다.' }
+      }
+
+      const updateData: any = {
+        updated_by: user.id,
+      }
+
+      if (updates.apiKey !== undefined) {
+        updateData.api_key = updates.apiKey
+      }
+      if (updates.description !== undefined) {
+        updateData.description = updates.description
+      }
+      if (updates.isActive !== undefined) {
+        updateData.is_active = updates.isActive
+      }
+
+      const { error } = await supabase
+        .from('api_keys')
+        .update(updateData)
+        .eq('id', id)
+
+      if (error) {
+        console.error('API Key 업데이트 실패:', error)
+        return { success: false, error: error.message }
+      }
+
+      return { success: true }
+    } catch (error: any) {
+      console.error('API Key 업데이트 중 오류:', error)
+      return { success: false, error: error.message || 'API Key 업데이트 중 오류가 발생했습니다.' }
+    }
+  }
+
+  // API Key 삭제
+  async deleteApiKey(id: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { error } = await supabase
+        .from('api_keys')
+        .delete()
+        .eq('id', id)
+
+      if (error) {
+        console.error('API Key 삭제 실패:', error)
+        return { success: false, error: error.message }
+      }
+
+      return { success: true }
+    } catch (error: any) {
+      console.error('API Key 삭제 중 오류:', error)
+      return { success: false, error: error.message || 'API Key 삭제 중 오류가 발생했습니다.' }
     }
   }
 }

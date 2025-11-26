@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { joggingService } from '@/services/joggingService'
 import { JoggingData, JoggingConfig, WeatherInfo } from '@/types'
 import { databaseService } from '@/services/databaseService'
 import { authService } from '@/services/authService'
+import { getWeatherInfo } from '@/services/weatherService'
 
 import CrewChatPanel from '@/components/CrewChatPanel'
 import CrewMeetingView from '@/components/CrewMeetingView'
@@ -41,11 +42,55 @@ const JoggingPage = () => {
   const [recommendations, setRecommendations] = useState(0) // 추천수
   const [hasCancelled, setHasCancelled] = useState(false) // 추천 취소 상태
   const [recommendToast, setRecommendToast] = useState<{ message: string; type: 'success' | 'cancel' } | null>(null) // 추천 토스트 메시지
+  const [currentWeather, setCurrentWeather] = useState<WeatherInfo[]>(weather || []) // 현재 날씨 정보
+  const [weatherLocation, setWeatherLocation] = useState<string>('') // 날씨 위치 정보
+  const [weatherLoading, setWeatherLoading] = useState(false) // 날씨 로딩 상태
+  const [airQualityExpanded, setAirQualityExpanded] = useState(false) // 대기질 정보 펼침/접힘 상태
+  const weatherLoadedRef = useRef(false) // 날씨 정보가 이미 로드되었는지 추적
 
   // hasNewMessage 상태 변경 추적
   useEffect(() => {
     console.log('💬 JoggingPage: hasNewMessage 상태 변경:', hasNewMessage)
   }, [hasNewMessage])
+
+  // 날씨 정보 로드 함수 (혼자 모드와 함께 모드 모두 사용)
+  const loadWeather = async (showLoading: boolean = false) => {
+    if (config?.mode !== 'alone' && config?.mode !== 'together') return
+    
+    if (showLoading) {
+      setWeatherLoading(true)
+    }
+    try {
+      const { weather: weatherData, location } = await getWeatherInfo()
+      setCurrentWeather(weatherData)
+      setWeatherLocation(location)
+    } catch (error) {
+      console.error('날씨 정보 로드 실패:', error)
+      // 기본값 설정
+      setWeatherLocation('서울')
+    } finally {
+      if (showLoading) {
+        setWeatherLoading(false)
+      }
+    }
+  }
+
+  // 입장 시 한 번만 날씨 정보 로드 (혼자 모드와 함께 모드 모두)
+  useEffect(() => {
+    if ((config?.mode === 'alone' || config?.mode === 'together') && !weatherLoadedRef.current) {
+      if (weather && weather.length > 0) {
+        // 전달받은 날씨 정보가 있으면 사용
+        setCurrentWeather(weather)
+        weatherLoadedRef.current = true
+      } else {
+        // 날씨 정보가 없으면 로드
+        loadWeather()
+        weatherLoadedRef.current = true
+      }
+    } else if (weather && weather.length > 0) {
+      setCurrentWeather(weather)
+    }
+  }, [config?.mode])
 
   // entryMessage가 변경되면 입장 알림 활성화
   useEffect(() => {
@@ -63,16 +108,31 @@ const JoggingPage = () => {
 
   useEffect(() => {
     if (isTracking) {
-      const interval = setInterval(() => {
-        const data = joggingService.getCurrentData()
-        const paused = joggingService.getIsPaused()
-        if (data) {
-          setJoggingData(data)
-        }
-        setIsPaused(paused)
-      }, 1000)
+      let animationFrameId: number | null = null
+      let lastUpdateTime = Date.now()
+      const UPDATE_INTERVAL = 1000 // 1초마다 업데이트
 
-      return () => clearInterval(interval)
+      const updateData = () => {
+        const now = Date.now()
+        if (now - lastUpdateTime >= UPDATE_INTERVAL) {
+          const data = joggingService.getCurrentData()
+          const paused = joggingService.getIsPaused()
+          if (data) {
+            setJoggingData(data)
+          }
+          setIsPaused(paused)
+          lastUpdateTime = now
+        }
+        animationFrameId = requestAnimationFrame(updateData)
+      }
+
+      animationFrameId = requestAnimationFrame(updateData)
+
+      return () => {
+        if (animationFrameId !== null) {
+          cancelAnimationFrame(animationFrameId)
+        }
+      }
     }
   }, [isTracking])
 
@@ -419,6 +479,49 @@ const JoggingPage = () => {
     return '🌤️'
   }
 
+  // 수치 기반 등급 계산 (에어코리아 기준)
+  const calculateGradeFromValue = (value: number | null, type: 'pm10' | 'pm25' | 'o3'): string | null => {
+    if (value === null || value === undefined) return null
+    
+    if (type === 'pm25') {
+      // 초미세먼지: 좋음(0~15), 보통(16~35), 나쁨(36~75), 매우나쁨(76~)
+      if (value <= 15) return '좋음'
+      if (value <= 35) return '보통'
+      if (value <= 75) return '나쁨'
+      return '매우나쁨'
+    } else if (type === 'pm10') {
+      // 미세먼지: 좋음(0~30), 보통(31~80), 나쁨(81~150), 매우나쁨(151~)
+      if (value <= 30) return '좋음'
+      if (value <= 80) return '보통'
+      if (value <= 150) return '나쁨'
+      return '매우나쁨'
+    } else if (type === 'o3') {
+      // 오존: 좋음(0~0.03), 보통(0.0301~0.09), 나쁨(0.0901~0.15), 매우나쁨(0.1501~)
+      if (value <= 0.03) return '좋음'
+      if (value <= 0.09) return '보통'
+      if (value <= 0.15) return '나쁨'
+      return '매우나쁨'
+    }
+    return null
+  }
+
+  // 등급별 아이콘 및 색상 반환
+  const getGradeIcon = (grade: string | null | undefined): { icon: string; color: string; status: string } => {
+    if (!grade) return { icon: '😐', color: 'text-gray-500', status: '없음' }
+    switch (grade) {
+      case '좋음':
+        return { icon: '😊', color: 'text-blue-500', status: '좋음' }
+      case '보통':
+        return { icon: '😐', color: 'text-green-500', status: '보통' }
+      case '나쁨':
+        return { icon: '😟', color: 'text-yellow-500', status: '나쁨' }
+      case '매우나쁨':
+        return { icon: '😠', color: 'text-red-500', status: '매우나쁨' }
+      default:
+        return { icon: '😐', color: 'text-gray-500', status: '없음' }
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-900 to-green-700 p-8">
       <div className="max-w-4xl mx-auto">
@@ -434,78 +537,167 @@ const JoggingPage = () => {
           />
         </div>
         
-        {/* 날씨 정보 표시 - 애플워치 스타일 */}
-        {weather && weather.length > 0 && config?.mode === 'alone' && (
+        {/* 날씨 정보 표시 - 애플워치 스타일 (혼자 모드와 함께 모드 모두) */}
+        {currentWeather && currentWeather.length > 0 && (config?.mode === 'alone' || config?.mode === 'together') && (
                 <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             className="mb-6"
           >
             <div className="bg-black/30 backdrop-blur-md rounded-3xl p-4 border border-white/10">
-              <div className="flex items-center justify-between gap-3">
-                {/* 오늘 날씨 - 메인 */}
-                {weather[0] && (
-                  <div className="flex items-center gap-3 flex-1">
-                    <div className="text-4xl">{getWeatherIcon(weather[0].condition)}</div>
-                    <div className="flex-1">
-                      <div className="text-xs text-white/60 mb-1 font-medium">오늘</div>
-                      <div className="text-2xl font-bold text-white tabular-nums">
-                        {weather[0].temperature}°
+              <div className="flex items-center justify-between mb-2">
+                {weatherLocation && (
+                  <div className="text-xs text-white/60 font-medium flex items-center gap-1">
+                    <span>📍</span>
+                    <span>{weatherLocation}</span>
+                  </div>
+                )}
+                {/* 날씨 새로고침 버튼 - 원형 화살표 */}
+                <button
+                  onClick={() => loadWeather(true)}
+                  disabled={weatherLoading}
+                  className="ml-auto w-8 h-8 rounded-full bg-green-600/80 backdrop-blur-sm flex items-center justify-center hover:bg-green-600 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="날씨 정보 새로고침"
+                >
+                  {weatherLoading ? (
+                    <svg 
+                      className="w-4 h-4 text-white animate-spin" 
+                      fill="none" 
+                      stroke="currentColor" 
+                      viewBox="0 0 24 24"
+                    >
+                      <path 
+                        strokeLinecap="round" 
+                        strokeLinejoin="round" 
+                        strokeWidth={2} 
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
+                      />
+                    </svg>
+                  ) : (
+                    <svg 
+                      className="w-4 h-4 text-white" 
+                      fill="none" 
+                      stroke="currentColor" 
+                      viewBox="0 0 24 24"
+                    >
+                      <path 
+                        strokeLinecap="round" 
+                        strokeLinejoin="round" 
+                        strokeWidth={2} 
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
+                      />
+                    </svg>
+                  )}
+                </button>
+              </div>
+              <div className="space-y-3">
+                {/* 날씨 정보 - 오늘, 내일, 모레 */}
+                {currentWeather.length > 0 && (
+                  <div className="flex gap-2">
+                    {currentWeather.slice(0, 3).map((w, index) => (
+                      <div key={index} className="flex-1 bg-white/20 backdrop-blur-sm rounded-lg p-2.5">
+                        <div className="text-xs font-medium text-white/70 mb-1">{w.date}</div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-xl">{getWeatherIcon(w.condition)}</span>
+                          <span className="text-lg font-bold text-white tabular-nums">{w.temperature}°</span>
+                        </div>
+                        <div className="text-xs text-white/60">습도 {w.humidity}%</div>
                       </div>
-                    </div>
+                    ))}
                   </div>
                 )}
                 
-                {/* 추가 정보 - 컴팩트 */}
-                <div className="flex items-center gap-4 text-white/80">
-                  <div className="text-center">
-                    <div className="text-xs text-white/50 mb-0.5">습도</div>
-                    <div className="text-sm font-semibold tabular-nums">{weather[0]?.humidity}%</div>
-                  </div>
-                  <div className="w-px h-8 bg-white/20"></div>
-                  <div className="text-center">
-                    <div className="text-xs text-white/50 mb-0.5">자외선</div>
-                    <div className="text-sm font-semibold tabular-nums">{weather[0]?.uvIndex}</div>
-                  </div>
-                  {weather[0]?.pm10 !== undefined && (
-                    <>
-                      <div className="w-px h-8 bg-white/20"></div>
-                      <div className="text-center">
-                        <div className="text-xs text-white/50 mb-0.5">미세먼지</div>
-                        <div className="text-sm font-semibold tabular-nums">{weather[0].pm10}</div>
+                {/* 대기질 정보 섹션 - 펼침/접힘 버튼 포함 */}
+                {currentWeather[0] && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-medium text-white/80">대기환경정보</span>
+                      <button
+                        onClick={() => setAirQualityExpanded(!airQualityExpanded)}
+                        className="p-1 rounded hover:bg-white/20 transition-colors"
+                        title={airQualityExpanded ? '접기' : '펼치기'}
+                      >
+                        <svg 
+                          className={`w-4 h-4 text-white transition-transform ${airQualityExpanded ? 'rotate-180' : ''}`}
+                          fill="none" 
+                          stroke="currentColor" 
+                          viewBox="0 0 24 24"
+                        >
+                          <path 
+                            strokeLinecap="round" 
+                            strokeLinejoin="round" 
+                            strokeWidth={2} 
+                            d="M19 9l-7 7-7-7" 
+                          />
+                        </svg>
+                      </button>
+                    </div>
+                    {airQualityExpanded && (
+                      <div className="grid grid-cols-2 gap-2">
+                        {/* 자외선 */}
+                        <div className="bg-white/20 backdrop-blur-sm rounded-lg p-2.5">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className="text-sm">☀️</span>
+                            <span className="text-xs font-medium text-white/90">자외선</span>
+                          </div>
+                          <div className="text-lg font-bold text-white tabular-nums">{currentWeather[0]?.uvIndex}</div>
+                        </div>
+                        
+                        {/* 미세먼지 */}
+                        {currentWeather[0]?.pm10 !== undefined && currentWeather[0]?.pm10 !== null && (
+                          <div className={`bg-white/20 backdrop-blur-sm rounded-lg p-2.5 ${getGradeIcon(currentWeather[0].pm10Grade || (currentWeather[0].pm10 !== null ? calculateGradeFromValue(currentWeather[0].pm10, 'pm10') : null)).color || 'text-white'}`}>
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span className="text-sm">{getGradeIcon(currentWeather[0].pm10Grade || (currentWeather[0].pm10 !== null ? calculateGradeFromValue(currentWeather[0].pm10, 'pm10') : null)).icon || '🌫️'}</span>
+                              <span className="text-xs font-medium text-white/90">미세먼지</span>
+                            </div>
+                            <div className="text-lg font-bold text-white tabular-nums">{currentWeather[0].pm10}</div>
+                            <div className="text-xs text-white/70 mt-0.5">㎍/㎥</div>
+                            {(currentWeather[0].pm10Grade || (currentWeather[0].pm10 !== null ? calculateGradeFromValue(currentWeather[0].pm10, 'pm10') : null)) && (
+                              <div className="text-xs mt-0.5 text-white/60">
+                                ({getGradeIcon(currentWeather[0].pm10Grade || (currentWeather[0].pm10 !== null ? calculateGradeFromValue(currentWeather[0].pm10, 'pm10') : null)).status})
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        
+                        {/* 초미세먼지 */}
+                        {currentWeather[0]?.pm25 !== undefined && currentWeather[0]?.pm25 !== null && (
+                          <div className={`bg-white/20 backdrop-blur-sm rounded-lg p-2.5 ${getGradeIcon(currentWeather[0].pm25Grade || (currentWeather[0].pm25 !== null ? calculateGradeFromValue(currentWeather[0].pm25, 'pm25') : null)).color || 'text-white'}`}>
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span className="text-sm">{getGradeIcon(currentWeather[0].pm25Grade || (currentWeather[0].pm25 !== null ? calculateGradeFromValue(currentWeather[0].pm25, 'pm25') : null)).icon || '💨'}</span>
+                              <span className="text-xs font-medium text-white/90">초미세먼지</span>
+                            </div>
+                            <div className="text-lg font-bold text-white tabular-nums">{currentWeather[0].pm25}</div>
+                            <div className="text-xs text-white/70 mt-0.5">㎍/㎥</div>
+                            {(currentWeather[0].pm25Grade || (currentWeather[0].pm25 !== null ? calculateGradeFromValue(currentWeather[0].pm25, 'pm25') : null)) && (
+                              <div className="text-xs mt-0.5 text-white/60">
+                                ({getGradeIcon(currentWeather[0].pm25Grade || (currentWeather[0].pm25 !== null ? calculateGradeFromValue(currentWeather[0].pm25, 'pm25') : null)).status})
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        
+                        {/* 오존 */}
+                        {currentWeather[0]?.o3 !== undefined && currentWeather[0]?.o3 !== null && (
+                          <div className={`bg-white/20 backdrop-blur-sm rounded-lg p-2.5 ${getGradeIcon(currentWeather[0].o3Grade || (currentWeather[0].o3 !== null ? calculateGradeFromValue(currentWeather[0].o3, 'o3') : null)).color || 'text-white'}`}>
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span className="text-sm">{getGradeIcon(currentWeather[0].o3Grade || (currentWeather[0].o3 !== null ? calculateGradeFromValue(currentWeather[0].o3, 'o3') : null)).icon || '☁️'}</span>
+                              <span className="text-xs font-medium text-white/90">오존</span>
+                            </div>
+                            <div className="text-lg font-bold text-white tabular-nums">{currentWeather[0].o3}</div>
+                            <div className="text-xs text-white/70 mt-0.5">ppm</div>
+                            {(currentWeather[0].o3Grade || (currentWeather[0].o3 !== null ? calculateGradeFromValue(currentWeather[0].o3, 'o3') : null)) && (
+                              <div className="text-xs mt-0.5 text-white/60">
+                                ({getGradeIcon(currentWeather[0].o3Grade || (currentWeather[0].o3 !== null ? calculateGradeFromValue(currentWeather[0].o3, 'o3') : null)).status})
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    </>
                     )}
                   </div>
+                )}
               </div>
-              
-              {/* 내일/모레 날씨 - 미니 카드 */}
-              {weather.length > 1 && (
-                <div className="flex gap-2 mt-3 pt-3 border-t border-white/10">
-                  {weather.slice(1, 3).map((w, index) => (
-                    <div key={index} className="flex-1 flex flex-col gap-2">
-                      <div className="flex items-center gap-2">
-                        <div className="text-xl">{getWeatherIcon(w.condition)}</div>
-                        <div className="flex-1">
-                          <div className="text-xs text-white/50">{w.date}</div>
-                          <div className="text-sm font-semibold text-white tabular-nums">{w.temperature}°</div>
-                        </div>
-                      </div>
-                      {/* 습도와 자외선 정보 */}
-                      <div className="flex items-center gap-3 text-xs text-white/70">
-                        <div className="flex items-center gap-1">
-                          <span>💧</span>
-                          <span className="tabular-nums">{w.humidity}%</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span>☀️</span>
-                          <span className="tabular-nums">{w.uvIndex}</span>
-                        </div>
-                      </div>
-                    </div>
-              ))}
-            </div>
-              )}
           </div>
           </motion.div>
         )}
@@ -549,7 +741,9 @@ const JoggingPage = () => {
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-black/30 backdrop-blur-md rounded-3xl p-8 text-center border border-white/10"
+            className={`bg-black/30 backdrop-blur-md rounded-3xl p-8 text-center border border-white/10 ${
+              config?.mode === 'together' && crewId ? 'mb-32 sm:mb-40' : ''
+            }`}
           >
             <div className="text-6xl mb-4">🏃</div>
             <p className="text-white/80 mb-6 text-sm leading-relaxed">
@@ -559,7 +753,7 @@ const JoggingPage = () => {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={handleStart}
-              className="px-8 py-4 bg-green-500 text-white rounded-2xl hover:bg-green-600 transition text-lg font-semibold shadow-lg"
+              className="px-8 py-4 bg-green-500 text-white rounded-2xl hover:bg-green-600 transition text-lg font-semibold shadow-lg relative z-50"
             >
               조깅 시작
             </motion.button>
@@ -700,57 +894,66 @@ const JoggingPage = () => {
                 )}
               </motion.div>
             )}
-
-            {/* 버튼 */}
-            <div className="flex gap-4">
-              {isTracking ? (
-                <>
-                  <button
-                    onClick={handlePause}
-                    className={`flex-1 px-6 py-4 rounded-xl transition font-semibold ${
-                      isPaused
-                        ? 'bg-green-500 text-white hover:bg-green-600'
-                        : 'bg-orange-500 text-white hover:bg-orange-600'
-                    }`}
-                  >
-                    {isPaused ? '운동 재개' : '운동일시정지'}
-                  </button>
+          </div>
+        )}
+        
+        {/* 버튼 - 페이지와 함께 스크롤되도록 relative로 변경 */}
+        {joggingData && (
+          <div 
+            className="flex gap-4 relative z-20 px-4 py-4"
+            style={{
+              marginBottom: config?.mode === 'together' && crewId 
+                ? `${meetingViewHeight + 20}px` 
+                : '20px',
+            }}
+          >
+            {isTracking ? (
+              <>
+                <button
+                  onClick={handlePause}
+                  className={`flex-1 px-6 py-4 rounded-xl transition font-semibold ${
+                    isPaused
+                      ? 'bg-green-500 text-white hover:bg-green-600'
+                      : 'bg-orange-500 text-white hover:bg-orange-600'
+                  }`}
+                >
+                  {isPaused ? '운동 재개' : '운동일시정지'}
+                </button>
                 <button
                   onClick={handleStop}
-                    className="flex-1 px-6 py-4 bg-red-500 text-white rounded-xl hover:bg-red-600 transition font-semibold"
+                  className="flex-1 px-6 py-4 bg-red-500 text-white rounded-xl hover:bg-red-600 transition font-semibold"
                 >
                   조깅 종료
                 </button>
-                  <button
-                    onClick={handleLeave}
-                    className="px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition font-semibold"
-                  >
-                    나가기
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={handleStart}
-                    className="flex-1 px-6 py-4 bg-green-500 text-white rounded-xl hover:bg-green-600 transition font-semibold"
-                  >
-                    다시 시작
-                  </button>
-                  <button
-                    onClick={handleLeave}
-                    className="flex-1 px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition font-semibold"
-                  >
-                    나가기
-                  </button>
-                </>
-              )}
-            </div>
+                <button
+                  onClick={handleLeave}
+                  className="px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition font-semibold"
+                >
+                  나가기
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={handleStart}
+                  className="flex-1 px-6 py-4 bg-green-500 text-white rounded-xl hover:bg-green-600 transition font-semibold"
+                >
+                  다시 시작
+                </button>
+                <button
+                  onClick={handleLeave}
+                  className="flex-1 px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition font-semibold"
+                >
+                  나가기
+                </button>
+              </>
+            )}
           </div>
         )}
 
         {/* 조깅 함께 모드: 미팅 화면 (하단) */}
         {config?.mode === 'together' && crewId && (
-          <div className="fixed left-0 right-0 z-30" style={{ bottom: 'env(safe-area-inset-bottom, 0px)' }}>
+          <div className="fixed left-0 right-0 z-50" style={{ bottom: 'env(safe-area-inset-bottom, 0px)' }}>
             <CrewMeetingView
               crewId={crewId}
               myVideoEnabled={myVideoEnabled}
@@ -765,20 +968,21 @@ const JoggingPage = () => {
           </div>
         )}
 
-        {/* 조깅 함께 모드: 추천 버튼 및 채팅 버튼 (오른쪽 끝) - 운동 시작 후에만 표시 */}
-        {config?.mode === 'together' && crewId && (isTracking || isPaused) && (
-          <>
+        {/* 조깅 함께 모드: 추천 버튼 및 채팅 버튼 (오른쪽 끝) - 조깅 시작 전/후 모두 표시 */}
+        {config?.mode === 'together' && crewId && (
+          <div className="fixed right-4 z-50 flex flex-col gap-3" style={{
+            bottom: isTracking || isPaused 
+              ? `calc(${meetingViewHeight + 80}px + env(safe-area-inset-bottom, 0px))`
+              : `calc(${meetingViewHeight + 20}px + env(safe-area-inset-bottom, 0px))`,
+          }}>
             {/* 추천 버튼 */}
             <button
               onClick={handleRecommend}
-              className={`fixed right-4 z-50 w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition ${
+              className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition ${
                 hasRecommended
                   ? 'bg-yellow-600 hover:bg-yellow-700'
                   : 'bg-yellow-500 hover:bg-yellow-600'
               }`}
-              style={{ 
-                bottom: `calc(${meetingViewHeight + 80}px + env(safe-area-inset-bottom, 0px))`,
-              }}
               title={hasRecommended ? '추천 취소' : '추천하기'}
             >
               <span className="text-2xl relative">
@@ -799,9 +1003,8 @@ const JoggingPage = () => {
                 setHasEntryNotification(false) // 입장 알림도 해제
                 console.log('💬 JoggingPage: 알림 상태를 false로 설정')
               }}
-              className="fixed right-20 z-50 w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition"
+              className="w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition"
               style={{ 
-                bottom: `calc(${meetingViewHeight + 80}px + env(safe-area-inset-bottom, 0px))`,
                 backgroundColor: (hasNewMessage || hasEntryNotification || unreadMessageCount > 0) ? '#fbbf24' : '#a855f7' // 새 메시지, 입장 알림, 또는 미확인 메시지 있으면 노란색
               }}
               title={`채팅 열기${unreadMessageCount > 0 ? ` (${unreadMessageCount}개 미확인)` : ''}`}
@@ -839,29 +1042,33 @@ const JoggingPage = () => {
                 )}
               </motion.span>
             </motion.button>
-            <CrewChatPanel 
-              crewId={crewId} 
-              isOpen={chatOpen} 
-              onClose={() => {
-                console.log('💬 JoggingPage: 채팅창 닫기')
-                setChatOpen(false)
-              }}
-              entryMessage={entryMessage}
-              onNewMessage={() => {
-                console.log('💬 JoggingPage: onNewMessage 콜백 호출됨!', { chatOpen })
-                if (!chatOpen) {
-                  console.log('💬 JoggingPage: hasNewMessage를 true로 설정')
-                  setHasNewMessage(true)
-                } else {
-                  console.log('💬 JoggingPage: 채팅창이 열려있어서 알림 설정 안함')
-                }
-              }}
-              onUnreadCountChange={(count) => {
-                console.log('💬 JoggingPage: 미확인 메시지 수 변경:', count)
-                setUnreadMessageCount(count)
-              }}
-            />
-          </>
+          </div>
+        )}
+        
+        {/* 채팅 패널 - 조건부 렌더링 밖에 위치 */}
+        {config?.mode === 'together' && crewId && (
+          <CrewChatPanel 
+            crewId={crewId} 
+            isOpen={chatOpen} 
+            onClose={() => {
+              console.log('💬 JoggingPage: 채팅창 닫기')
+              setChatOpen(false)
+            }}
+            entryMessage={entryMessage}
+            onNewMessage={() => {
+              console.log('💬 JoggingPage: onNewMessage 콜백 호출됨!', { chatOpen })
+              if (!chatOpen) {
+                console.log('💬 JoggingPage: hasNewMessage를 true로 설정')
+                setHasNewMessage(true)
+              } else {
+                console.log('💬 JoggingPage: 채팅창이 열려있어서 알림 설정 안함')
+              }
+            }}
+            onUnreadCountChange={(count) => {
+              console.log('💬 JoggingPage: 미확인 메시지 수 변경:', count)
+              setUnreadMessageCount(count)
+            }}
+          />
         )}
 
         {/* 추천 토스트 메시지 */}

@@ -4,7 +4,7 @@ import { motion } from 'framer-motion'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import NavigationButtons from '@/components/NavigationButtons'
 import { authService } from '@/services/authService'
-import { adminService, DashboardStats, Announcement } from '@/services/adminService'
+import { adminService, DashboardStats, Announcement, ApiKey } from '@/services/adminService'
 import { loginHistoryService, LoginHistory } from '@/services/loginHistoryService'
 import { databaseService, User, Crew, JoggingCrew } from '@/services/databaseService'
 import { rankService } from '@/services/rankService'
@@ -200,6 +200,17 @@ const AdminDashboardPage = () => {
   const [goalCreatorMap, setGoalCreatorMap] = useState<Record<string, string>>({})
   const [goalCreatorRanks, setGoalCreatorRanks] = useState<Record<string, number>>({}) // 목표 생성자 계급
   const [announcementCreatorMap, setAnnouncementCreatorMap] = useState<Record<string, string>>({})
+  
+  // API Key 관리 상태
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([])
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false)
+  const [editingApiKey, setEditingApiKey] = useState<ApiKey | null>(null)
+  const [apiKeyForm, setApiKeyForm] = useState({
+    keyType: 'llm' as 'llm' | 'weather',
+    apiKey: '',
+    description: '',
+    isActive: true,
+  })
   
   // 페이지네이션 상태
   const [userPagination, setUserPagination] = useState({ offset: 0, hasMore: true, loading: false })
@@ -639,9 +650,11 @@ const AdminDashboardPage = () => {
       const [announcementsResult, announcementStatsData] = await Promise.all([
         adminService.getAllAnnouncements(PAGE_SIZE, 0),
         adminService.getAnnouncementStats(),
+        adminService.getAllApiKeys(),
       ])
       setAnnouncements(announcementsResult.data)
       setAnnouncementStats(announcementStatsData)
+      setApiKeys(apiKeysResult)
       
       // 공지사항 생성자 정보 가져오기
       const announcementCreatorMap: Record<string, string> = {}
@@ -1565,6 +1578,9 @@ const AdminDashboardPage = () => {
                         )}
                       </div>
                       <div className="text-sm text-gray-400 break-all">{user.email}</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        가입일: {user.createdAt ? new Date(user.createdAt).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' }) : '-'}
+                      </div>
                       {activeTab === 'deleted' && (
                         <div className="text-xs text-red-400 mt-1">
                           탈퇴일: {user.deletedAt ? new Date(user.deletedAt).toLocaleDateString('ko-KR') : '-'}
@@ -2291,6 +2307,124 @@ const AdminDashboardPage = () => {
           </div>
         </div>
 
+        {/* API Key 생성/수정 모달 */}
+        {showApiKeyModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-gray-800 rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+              <h2 className="text-2xl font-bold text-white mb-4">
+                {editingApiKey ? 'API Key 수정' : 'API Key 생성'}
+              </h2>
+              
+              <div className="space-y-4 mb-6">
+                <div>
+                  <label className="block text-white text-sm font-semibold mb-2">타입</label>
+                  <select
+                    value={apiKeyForm.keyType}
+                    onChange={(e) => setApiKeyForm(prev => ({ ...prev, keyType: e.target.value as 'llm' | 'weather' }))}
+                    disabled={!!editingApiKey}
+                    className="w-full px-4 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                  >
+                    <option value="llm">🤖 LLM API Key</option>
+                    <option value="weather">🌤️ Weather API Key</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-white text-sm font-semibold mb-2">API Key</label>
+                  <input
+                    type="password"
+                    value={apiKeyForm.apiKey}
+                    onChange={(e) => setApiKeyForm(prev => ({ ...prev, apiKey: e.target.value }))}
+                    className="w-full px-4 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="API Key를 입력하세요"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-white text-sm font-semibold mb-2">설명</label>
+                  <input
+                    type="text"
+                    value={apiKeyForm.description}
+                    onChange={(e) => setApiKeyForm(prev => ({ ...prev, description: e.target.value }))}
+                    className="w-full px-4 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="API Key 설명을 입력하세요"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="apiKeyIsActive"
+                    checked={apiKeyForm.isActive}
+                    onChange={(e) => setApiKeyForm(prev => ({ ...prev, isActive: e.target.checked }))}
+                    className="w-4 h-4 rounded"
+                  />
+                  <label htmlFor="apiKeyIsActive" className="text-white text-sm">활성화</label>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setShowApiKeyModal(false)
+                    setEditingApiKey(null)
+                    setApiKeyForm({ keyType: 'llm', apiKey: '', description: '', isActive: true })
+                  }}
+                  className="flex-1 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600"
+                >
+                  취소
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!apiKeyForm.apiKey.trim()) {
+                      alert('API Key를 입력해주세요.')
+                      return
+                    }
+
+                    if (editingApiKey) {
+                      // 수정
+                      const result = await adminService.updateApiKey(editingApiKey.id, {
+                        apiKey: apiKeyForm.apiKey,
+                        description: apiKeyForm.description,
+                        isActive: apiKeyForm.isActive,
+                      })
+                      if (result.success) {
+                        alert('API Key가 수정되었습니다.')
+                        setShowApiKeyModal(false)
+                        setEditingApiKey(null)
+                        setApiKeyForm({ keyType: 'llm', apiKey: '', description: '', isActive: true })
+                        const keys = await adminService.getAllApiKeys()
+                        setApiKeys(keys)
+                      } else {
+                        alert(`API Key 수정 실패: ${result.error}`)
+                      }
+                    } else {
+                      // 생성
+                      const result = await adminService.upsertApiKey(
+                        apiKeyForm.keyType,
+                        apiKeyForm.apiKey,
+                        apiKeyForm.description
+                      )
+                      if (result.success) {
+                        alert('API Key가 저장되었습니다.')
+                        setShowApiKeyModal(false)
+                        setApiKeyForm({ keyType: 'llm', apiKey: '', description: '', isActive: true })
+                        const keys = await adminService.getAllApiKeys()
+                        setApiKeys(keys)
+                      } else {
+                        alert(`API Key 저장 실패: ${result.error}`)
+                      }
+                    }
+                  }}
+                  className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+                >
+                  저장
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* 공지사항 생성/수정 모달 */}
         {showAnnouncementModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -2368,6 +2502,85 @@ const AdminDashboardPage = () => {
             </div>
           </div>
         )}
+
+        {/* API Key 관리 */}
+        <div className="bg-gray-800/90 rounded-2xl p-6 mb-8">
+          <div className="flex flex-col gap-4 mb-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl md:text-2xl font-bold text-white">🔑 API Key 관리</h2>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={async () => {
+                  const keys = await adminService.getAllApiKeys()
+                  setApiKeys(keys)
+                }}
+                className="px-3 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 text-xs md:text-sm font-semibold flex items-center gap-1.5"
+                title="Reload"
+              >
+                <span>↻</span>
+                <span className="hidden sm:inline">Reload</span>
+              </button>
+            </div>
+          </div>
+
+          {/* API Key 목록 */}
+          <div className="space-y-2">
+            {apiKeys.length === 0 ? (
+              <div className="text-center text-gray-400 py-8">API Key가 없습니다.</div>
+            ) : (
+              apiKeys.map((apiKey) => (
+                <div
+                  key={apiKey.id}
+                  className={`rounded-lg p-4 flex items-start gap-3 ${
+                    !apiKey.isActive
+                      ? 'bg-yellow-900/20 border border-yellow-500/50'
+                      : 'bg-gray-700/50'
+                  }`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="text-white font-semibold">
+                        {apiKey.keyType === 'llm' ? '🤖 LLM API Key' : '🌤️ Weather API Key'}
+                      </div>
+                      {!apiKey.isActive && (
+                        <span className="text-xs text-yellow-400 bg-yellow-500/20 px-2 py-1 rounded">비활성</span>
+                      )}
+                    </div>
+                    <div className="text-sm text-gray-400 mt-1">
+                      {apiKey.description || '설명 없음'}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      API Key: {apiKey.apiKey ? (apiKey.apiKey.length > 0 ? '***' + apiKey.apiKey.slice(-4) : '설정되지 않음') : '설정되지 않음'}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      수정일: {new Date(apiKey.updatedAt).toLocaleDateString('ko-KR')}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                    <button
+                      onClick={() => {
+                        setEditingApiKey(apiKey)
+                        setApiKeyForm({
+                          keyType: apiKey.keyType,
+                          apiKey: apiKey.apiKey,
+                          description: apiKey.description || '',
+                          isActive: apiKey.isActive,
+                        })
+                        setShowApiKeyModal(true)
+                      }}
+                      className="px-2 sm:px-3 py-1.5 bg-blue-500 text-white rounded-lg text-xs hover:bg-blue-600 font-semibold whitespace-nowrap flex items-center gap-1"
+                      title="수정"
+                    >
+                      <span>✏️</span>
+                      <span className="hidden sm:inline">수정</span>
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
 
         {/* 관리 작업 */}
         <div className="bg-gray-800/90 rounded-2xl p-6">

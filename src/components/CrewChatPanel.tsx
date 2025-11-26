@@ -9,6 +9,7 @@ import { databaseService, ChatMessage } from '@/services/databaseService'
 import { authService } from '@/services/authService'
 import { rankService } from '@/services/rankService'
 import RankBadge from '@/components/RankBadge'
+import { getWeatherInfo } from '@/services/weatherService'
 
 interface CrewChatPanelProps {
   crewId: string
@@ -23,9 +24,15 @@ interface WeatherData {
   temperature: number
   humidity: number
   uvIndex: number
-  pm10: number
-  pm25: number
+  pm10: number | null
+  pm25: number | null
+  o3?: number | null // 오존 (O3)
+  pm10Grade?: string | null // 미세먼지 등급
+  pm25Grade?: string | null // 초미세먼지 등급
+  o3Grade?: string | null // 오존 등급
   condition: string
+  location?: string
+  date?: string // 날짜 (오늘, 내일, 모레)
 }
 
 const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, onUnreadCountChange }: CrewChatPanelProps) => {
@@ -34,6 +41,9 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
   const [newMessage, setNewMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [weather, setWeather] = useState<WeatherData | null>(null)
+  const [weatherList, setWeatherList] = useState<WeatherData[]>([]) // 오늘, 내일, 모레 날씨 목록
+  const [weatherLoading, setWeatherLoading] = useState(false) // 날씨 로딩 상태
+  const [airQualityExpanded, setAirQualityExpanded] = useState(false) // 대기질 정보 펼침/접힘 상태
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const previousEntryMessageRef = useRef<string | null>(null)
   const previousMessagesCountRef = useRef<number>(0)
@@ -41,6 +51,7 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
   const currentUserIdRef = useRef<string | null>(null)
   const lastReadMessageIdRef = useRef<string | null>(null) // 마지막으로 읽은 메시지 ID
   const [userRanks, setUserRanks] = useState<Record<string, number>>({}) // 사용자별 계급 캐시
+  const weatherLoadedRef = useRef(false) // 날씨 정보가 이미 로드되었는지 추적
 
   useEffect(() => {
     // 현재 사용자 ID 저장
@@ -54,12 +65,19 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
   useEffect(() => {
     if (isOpen) {
       loadMessages()
-      loadWeather()
+      // 날씨 정보는 채팅창을 열었을 때 한 번만 로드
+      if (!weatherLoadedRef.current) {
+        loadWeather()
+        weatherLoadedRef.current = true
+      }
+      // 메시지만 주기적으로 갱신 (날씨는 제외)
       const interval = setInterval(() => {
         loadMessages()
-        loadWeather()
-      }, 2000) // 2초마다 새 메시지 및 날씨 확인
+      }, 2000) // 2초마다 새 메시지 확인
       return () => clearInterval(interval)
+    } else {
+      // 채팅창이 닫히면 날씨 로드 플래그 리셋
+      weatherLoadedRef.current = false
     }
   }, [isOpen, crewId])
 
@@ -256,17 +274,67 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
     }
   }, [entryMessage, crewId])
 
-  const loadWeather = async () => {
-    // 실제로는 날씨 API를 호출해야 하지만, 여기서는 모킹 데이터 사용
-    const mockWeather: WeatherData = {
-      temperature: 22,
-      humidity: 65,
-      uvIndex: 5,
-      pm10: 45, // 미세먼지
-      pm25: 25, // 초미세먼지
-      condition: '맑음',
+  const loadWeather = async (showLoading: boolean = false) => {
+    if (showLoading) {
+      setWeatherLoading(true)
     }
-    setWeather(mockWeather)
+    try {
+      const { weather: weatherInfoList, location } = await getWeatherInfo()
+      if (weatherInfoList && weatherInfoList.length > 0) {
+        // 오늘 날씨를 기본으로 설정
+        const todayWeather = weatherInfoList[0]
+        setWeather({
+          temperature: todayWeather.temperature,
+          humidity: todayWeather.humidity,
+          uvIndex: todayWeather.uvIndex,
+          pm10: todayWeather.pm10 ?? null,
+          pm25: todayWeather.pm25 ?? null,
+          o3: todayWeather.o3 ?? null,
+          pm10Grade: todayWeather.pm10Grade ?? null,
+          pm25Grade: todayWeather.pm25Grade ?? null,
+          o3Grade: todayWeather.o3Grade ?? null,
+          condition: todayWeather.condition,
+          location: location,
+          date: todayWeather.date,
+        })
+        
+        // 전체 날씨 목록 저장 (오늘, 내일, 모레)
+        const weatherDataList: WeatherData[] = weatherInfoList.map(w => ({
+          temperature: w.temperature,
+          humidity: w.humidity,
+          uvIndex: w.uvIndex,
+          pm10: w.pm10 ?? null,
+          pm25: w.pm25 ?? null,
+          o3: w.o3 ?? null,
+          pm10Grade: w.pm10Grade ?? null,
+          pm25Grade: w.pm25Grade ?? null,
+          o3Grade: w.o3Grade ?? null,
+          condition: w.condition,
+          location: location,
+          date: w.date,
+        }))
+        setWeatherList(weatherDataList)
+      }
+    } catch (error) {
+      console.error('날씨 정보 로드 실패:', error)
+      // 기본값 사용
+      setWeather({
+        temperature: 22,
+        humidity: 65,
+        uvIndex: 5,
+        pm10: null,
+        pm25: null,
+        o3: null,
+        condition: '맑음',
+        location: '서울',
+        date: '오늘',
+      })
+      setWeatherList([])
+    } finally {
+      if (showLoading) {
+        setWeatherLoading(false)
+      }
+    }
   }
 
   const loadMessages = async () => {
@@ -371,17 +439,76 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
     }
   }
 
-  const getPMStatus = (pm10: number, pm25: number): { status: string; color: string } => {
-    const avg = (pm10 + pm25) / 2
-    if (avg <= 30) return { status: '좋음', color: 'text-blue-500' }
-    if (avg <= 50) return { status: '보통', color: 'text-green-500' }
-    if (avg <= 100) return { status: '나쁨', color: 'text-yellow-500' }
-    return { status: '매우나쁨', color: 'text-red-500' }
+  // 등급별 아이콘 및 색상 반환
+  const getGradeIcon = (grade: string | null | undefined): { icon: string; color: string; status: string } => {
+    if (!grade) return { icon: '😐', color: 'text-gray-500', status: '없음' }
+    switch (grade) {
+      case '좋음':
+        return { icon: '😊', color: 'text-blue-500', status: '좋음' }
+      case '보통':
+        return { icon: '😐', color: 'text-green-500', status: '보통' }
+      case '나쁨':
+        return { icon: '😟', color: 'text-yellow-500', status: '나쁨' }
+      case '매우나쁨':
+        return { icon: '😠', color: 'text-red-500', status: '매우나쁨' }
+      default:
+        return { icon: '😐', color: 'text-gray-500', status: '없음' }
+    }
+  }
+  
+  // 수치 기반 등급 계산 (등급 정보가 없을 때 사용) - 에어코리아 기준
+  const calculateGradeFromValue = (value: number | null, type: 'pm10' | 'pm25' | 'o3'): string | null => {
+    if (value === null || value === undefined) return null
+    
+    if (type === 'pm25') {
+      // 초미세먼지: 좋음(0~15), 보통(16~35), 나쁨(36~75), 매우나쁨(76~)
+      if (value <= 15) return '좋음'
+      if (value <= 35) return '보통'
+      if (value <= 75) return '나쁨'
+      return '매우나쁨'
+    } else if (type === 'pm10') {
+      // 미세먼지: 좋음(0~30), 보통(31~80), 나쁨(81~150), 매우나쁨(151~)
+      if (value <= 30) return '좋음'
+      if (value <= 80) return '보통'
+      if (value <= 150) return '나쁨'
+      return '매우나쁨'
+    } else if (type === 'o3') {
+      // 오존: 좋음(0~0.03), 보통(0.0301~0.09), 나쁨(0.0901~0.15), 매우나쁨(0.1501~)
+      if (value <= 0.03) return '좋음'
+      if (value <= 0.09) return '보통'
+      if (value <= 0.15) return '나쁨'
+      return '매우나쁨'
+    }
+    return null
+  }
+  
+  // 수치 기반 등급 계산 (등급 정보가 없을 때 사용)
+  const getPMStatus = (pm10: number | null, pm25: number | null): { status: string; color: string; icon: string } => {
+    if (pm10 === null && pm25 === null) {
+      return { status: '없음', color: 'text-gray-500', icon: '😐' }
+    }
+    // PM10과 PM25 중 하나라도 있으면 해당 등급 사용, 둘 다 있으면 더 나쁜 등급 사용
+    const pm10Grade = pm10 !== null ? calculateGradeFromValue(pm10, 'pm10') : null
+    const pm25Grade = pm25 !== null ? calculateGradeFromValue(pm25, 'pm25') : null
+    
+    // 등급 우선순위: 매우나쁨 > 나쁨 > 보통 > 좋음
+    const gradePriority: Record<string, number> = { '매우나쁨': 4, '나쁨': 3, '보통': 2, '좋음': 1 }
+    let finalGrade = pm10Grade || pm25Grade
+    if (pm10Grade && pm25Grade) {
+      finalGrade = gradePriority[pm10Grade] > gradePriority[pm25Grade] ? pm10Grade : pm25Grade
+    }
+    
+    return getGradeIcon(finalGrade)
+  }
+  
+  const formatAirQuality = (value: number | null | undefined): string => {
+    if (value === null || value === undefined) return '없음'
+    return String(value)
   }
 
   const currentMonth = new Date().getMonth() + 1
   const weatherBg = weather ? getWeatherBackground(weather.condition, currentMonth) : 'bg-gradient-to-br from-blue-200 via-blue-100 to-white'
-  const pmStatus = weather ? getPMStatus(weather.pm10, weather.pm25) : { status: '보통', color: 'text-green-500' }
+  const pmStatus = weather ? getPMStatus(weather.pm10, weather.pm25) : { status: '보통', color: 'text-green-500', icon: '😐' }
 
   return (
     <AnimatePresence>
@@ -393,7 +520,7 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/50 z-40"
+            className="fixed inset-0 bg-black/50 z-[9998]"
           />
 
           {/* 채팅 패널 */}
@@ -402,60 +529,200 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className={`fixed right-0 top-0 h-full w-full max-w-md z-50 flex flex-col shadow-2xl ${weatherBg}`}
+            className={`fixed right-0 w-full max-w-md z-[9999] flex flex-col shadow-2xl ${weatherBg}`}
+            style={{ 
+              top: 0,
+              bottom: 0,
+              height: '100%',
+              minHeight: '-webkit-fill-available', // iOS Safari 대응
+              maxHeight: '100dvh',
+              boxSizing: 'border-box',
+            }}
           >
+            {/* Safe area 상단 여백 - 아이폰 노치/상태바 영역 */}
+            <div style={{ 
+              height: 'max(env(safe-area-inset-top, 0px), 44px)', // 최소 44px (상태바 높이)
+              minHeight: 'max(env(safe-area-inset-top, 0px), 44px)',
+              flexShrink: 0,
+              backgroundColor: 'transparent',
+            }} />
+            
             {/* 헤더 - 날씨 정보 포함 */}
-            <div className="bg-white/90 backdrop-blur-sm p-4 flex items-center justify-between border-b border-gray-200 shadow-sm">
-              <div className="flex items-center gap-3">
-              <button
-                onClick={onClose}
-                  className="text-gray-600 hover:text-gray-800 transition p-1"
-              >
-                  ←
-              </button>
-                <div>
-                  <h3 className="text-gray-800 font-semibold text-lg">채팅</h3>
-                  {weather && (
-                    <div className="flex items-center gap-2 text-xs text-gray-600 mt-1 flex-wrap">
-                      <span title="날씨" className="flex items-center gap-1">
-                        {getWeatherIcon(weather.condition)}
-                        <span className="font-medium">날씨</span>
-                        <span className="hidden sm:inline">: {weather.condition}</span>
+            <div 
+              className="bg-white/90 backdrop-blur-sm border-b border-gray-200 shadow-sm flex-shrink-0"
+              style={{
+                paddingTop: '1rem',
+                paddingBottom: '1rem',
+              }}
+            >
+              <div className="px-4 flex items-center justify-between">
+                <div className="flex items-center gap-3 flex-1">
+                  <button
+                    onClick={onClose}
+                    className="text-gray-600 hover:text-gray-800 transition p-1"
+                  >
+                    ←
+                  </button>
+                  <div className="flex items-center gap-2 flex-1">
+                    <h3 className="text-gray-800 font-semibold text-lg">채팅</h3>
+                    {weather && weather.location && (
+                      <span title="위치" className="flex items-center gap-1 text-xs text-gray-600">
+                        <span>📍</span>
+                        <span className="font-medium">{weather.location}</span>
                       </span>
-                      <span>•</span>
-                      <span title="온도" className="flex items-center gap-1">
-                        <span>🌡️</span>
-                        <span className="font-medium">온도</span>
-                        <span>: {weather.temperature}℃</span>
-                      </span>
-                      <span>•</span>
-                      <span title="습도" className="flex items-center gap-1">
-                        <span>💧</span>
-                        <span className="font-medium">습도</span>
-                        <span>: {weather.humidity}%</span>
-                      </span>
-                      <span>•</span>
-                      <span title="자외선" className="flex items-center gap-1">
-                        <span>☀️</span>
-                        <span className="font-medium">자외선</span>
-                        <span>: {weather.uvIndex}</span>
-                      </span>
-                      <span>•</span>
-                      <span title="미세먼지" className={`flex items-center gap-1 ${pmStatus.color}`}>
-                        <span>🌫️</span>
-                        <span className="font-medium">미세먼지</span>
-                        <span>: {pmStatus.status}</span>
-                      </span>
+                    )}
+                  </div>
+                </div>
+                {/* 날씨 새로고침 버튼 - 원형 화살표 */}
+                <button
+                  onClick={() => loadWeather(true)}
+                  disabled={weatherLoading}
+                  className="p-2 rounded-full bg-green-500 hover:bg-green-600 text-white transition-colors shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="날씨 정보 새로고침"
+                >
+                  {weatherLoading ? (
+                    <svg 
+                      className="w-4 h-4 animate-spin" 
+                      fill="none" 
+                      stroke="currentColor" 
+                      viewBox="0 0 24 24"
+                    >
+                      <path 
+                        strokeLinecap="round" 
+                        strokeLinejoin="round" 
+                        strokeWidth={2} 
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
+                      />
+                    </svg>
+                  ) : (
+                    <svg 
+                      className="w-4 h-4" 
+                      fill="none" 
+                      stroke="currentColor" 
+                      viewBox="0 0 24 24"
+                    >
+                      <path 
+                        strokeLinecap="round" 
+                        strokeLinejoin="round" 
+                        strokeWidth={2} 
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
+                      />
+                    </svg>
+                  )}
+                </button>
+              </div>
+              
+              {/* 날씨 정보 - 오늘, 내일, 모레 */}
+              {weatherList.length > 0 && (
+                <div className="px-4 pb-2 pt-2 bg-white/70">
+                  <div className="flex gap-2">
+                    {weatherList.slice(0, 3).map((w, index) => (
+                      <div key={index} className="flex-1 bg-white/80 rounded-lg p-2 shadow-sm">
+                        <div className="text-xs font-medium text-gray-600 mb-1">{w.date}</div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-lg">{getWeatherIcon(w.condition)}</span>
+                          <span className="text-sm font-semibold text-gray-800">{w.temperature}°</span>
+                        </div>
+                        <div className="text-xs text-gray-600">습도 {w.humidity}%</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {/* 대기질 정보 섹션 - 펼침/접힘 버튼 포함 */}
+              {weather && (
+                <div className="px-4 pb-3 pt-2 bg-white/70">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-medium text-gray-700">대기환경정보</span>
+                    <button
+                      onClick={() => setAirQualityExpanded(!airQualityExpanded)}
+                      className="p-1 rounded hover:bg-gray-200 transition-colors"
+                      title={airQualityExpanded ? '접기' : '펼치기'}
+                    >
+                      <svg 
+                        className={`w-4 h-4 text-gray-600 transition-transform ${airQualityExpanded ? 'rotate-180' : ''}`}
+                        fill="none" 
+                        stroke="currentColor" 
+                        viewBox="0 0 24 24"
+                      >
+                        <path 
+                          strokeLinecap="round" 
+                          strokeLinejoin="round" 
+                          strokeWidth={2} 
+                          d="M19 9l-7 7-7-7" 
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  {airQualityExpanded && (
+                    <div className="grid grid-cols-2 gap-3">
+                      {/* 자외선 */}
+                      <div className="bg-white/80 rounded-lg p-2 shadow-sm">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-sm">☀️</span>
+                          <span className="text-xs font-medium text-gray-700">자외선</span>
+                        </div>
+                        <div className="text-lg font-bold text-gray-800">{weather.uvIndex}</div>
+                      </div>
+                      
+                      {/* 미세먼지 */}
+                      <div className={`bg-white/80 rounded-lg p-2 shadow-sm ${getGradeIcon(weather.pm10Grade || (weather.pm10 !== null ? calculateGradeFromValue(weather.pm10, 'pm10') : null)).color || 'text-gray-700'}`}>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-sm">{getGradeIcon(weather.pm10Grade || (weather.pm10 !== null ? calculateGradeFromValue(weather.pm10, 'pm10') : null)).icon || '🌫️'}</span>
+                          <span className="text-xs font-medium">미세먼지</span>
+                        </div>
+                        <div className="text-lg font-bold">
+                          {formatAirQuality(weather.pm10)} {weather.pm10 !== null && weather.pm10 !== undefined ? '㎍/㎥' : ''}
+                        </div>
+                        {(weather.pm10Grade || (weather.pm10 !== null ? calculateGradeFromValue(weather.pm10, 'pm10') : null)) && (
+                          <div className="text-xs mt-0.5 opacity-75">
+                            ({getGradeIcon(weather.pm10Grade || (weather.pm10 !== null ? calculateGradeFromValue(weather.pm10, 'pm10') : null)).status})
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* 초미세먼지 */}
+                      <div className={`bg-white/80 rounded-lg p-2 shadow-sm ${getGradeIcon(weather.pm25Grade || (weather.pm25 !== null ? calculateGradeFromValue(weather.pm25, 'pm25') : null)).color}`}>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-sm">{getGradeIcon(weather.pm25Grade || (weather.pm25 !== null ? calculateGradeFromValue(weather.pm25, 'pm25') : null)).icon || '💨'}</span>
+                          <span className="text-xs font-medium">초미세먼지</span>
+                        </div>
+                        <div className="text-lg font-bold">
+                          {formatAirQuality(weather.pm25)} {weather.pm25 !== null && weather.pm25 !== undefined ? '㎍/㎥' : ''}
+                        </div>
+                        {(weather.pm25Grade || (weather.pm25 !== null ? calculateGradeFromValue(weather.pm25, 'pm25') : null)) && (
+                          <div className="text-xs mt-0.5 opacity-75">
+                            ({getGradeIcon(weather.pm25Grade || (weather.pm25 !== null ? calculateGradeFromValue(weather.pm25, 'pm25') : null)).status})
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* 오존 */}
+                      <div className={`bg-white/80 rounded-lg p-2 shadow-sm ${getGradeIcon(weather.o3Grade || (weather.o3 !== null ? calculateGradeFromValue(weather.o3, 'o3') : null)).color}`}>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-sm">{getGradeIcon(weather.o3Grade || (weather.o3 !== null ? calculateGradeFromValue(weather.o3, 'o3') : null)).icon || '☁️'}</span>
+                          <span className="text-xs font-medium">오존</span>
+                        </div>
+                        <div className="text-lg font-bold">
+                          {formatAirQuality(weather.o3)} {weather.o3 !== null && weather.o3 !== undefined ? 'ppm' : ''}
+                        </div>
+                        {(weather.o3Grade || (weather.o3 !== null ? calculateGradeFromValue(weather.o3, 'o3') : null)) && (
+                          <div className="text-xs mt-0.5 opacity-75">
+                            ({getGradeIcon(weather.o3Grade || (weather.o3 !== null ? calculateGradeFromValue(weather.o3, 'o3') : null)).status})
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
-              </div>
+              )}
             </div>
 
             {/* 날씨 상세 정보 카드 - 제거 (헤더에 이미 표시됨) */}
 
             {/* 메시지 목록 */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+            <div className="flex-1 overflow-y-auto p-4 space-y-2" style={{ minHeight: 0 }}>
               {messages.length === 0 && entryMessages.length === 0 ? (
                 <div className="text-center text-gray-500 py-8">
                   메시지가 없습니다
@@ -538,8 +805,22 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
               <div ref={messagesEndRef} />
             </div>
 
+            {/* Safe area 하단 여백 */}
+            <div style={{ 
+              height: 'env(safe-area-inset-bottom, 0px)',
+              minHeight: 'env(safe-area-inset-bottom, 0px)',
+              flexShrink: 0,
+            }} />
+            
             {/* 입력 영역 */}
-            <form onSubmit={handleSendMessage} className="bg-white/90 backdrop-blur-sm p-3 border-t border-gray-200 mobile-bottom-safe" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 0.75rem)' }}>
+            <form 
+              onSubmit={handleSendMessage} 
+              className="bg-white/90 backdrop-blur-sm p-3 border-t border-gray-200 flex-shrink-0" 
+              style={{ 
+                paddingBottom: '0.75rem',
+                paddingTop: '0.75rem',
+              }}
+            >
               <div className="flex gap-2 items-end">
                 <input
                   type="text"

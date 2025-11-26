@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { JoggingMode, JoggingConfig, AlarmConfig, JoggingTogetherConfig, WeatherInfo } from '@/types'
 import NavigationButtons from '@/components/NavigationButtons'
+import { getWeatherInfo } from '@/services/weatherService'
 
 const JoggingConfigPage = () => {
   const navigate = useNavigate()
@@ -29,39 +30,47 @@ const JoggingConfigPage = () => {
 
   const daysOfWeek = ['일', '월', '화', '수', '목', '금', '토']
 
-  // 날씨 정보 가져오기 (모킹 데이터)
+  // 실시간 날씨 정보 가져오기
   useEffect(() => {
-    // 실제로는 날씨 API를 호출해야 하지만, 여기서는 모킹 데이터 사용
-    const mockWeather: WeatherInfo[] = [
-      {
-        date: '오늘',
-        temperature: 22,
-        humidity: 65,
-        uvIndex: 5,
-        condition: '맑음',
-        pm10: 45,
-        pm25: 25,
-      },
-      {
-        date: '내일',
-        temperature: 24,
-        humidity: 70,
-        uvIndex: 6,
-        condition: '구름조금',
-        pm10: 50,
-        pm25: 28,
-      },
-      {
-        date: '모레',
-        temperature: 20,
-        humidity: 60,
-        uvIndex: 4,
-        condition: '맑음',
-        pm10: 40,
-        pm25: 22,
-      },
-    ]
-    setWeather(mockWeather)
+    const loadWeather = async () => {
+      try {
+        const { weather: weatherData } = await getWeatherInfo()
+        setWeather(weatherData)
+      } catch (error) {
+        console.error('날씨 정보 로드 실패:', error)
+        // 기본값 사용
+        setWeather([
+          {
+            date: '오늘',
+            temperature: 22,
+            humidity: 65,
+            uvIndex: 5,
+            condition: '맑음',
+            pm10: 45,
+            pm25: 25,
+          },
+          {
+            date: '내일',
+            temperature: 24,
+            humidity: 70,
+            uvIndex: 6,
+            condition: '구름조금',
+            pm10: 50,
+            pm25: 28,
+          },
+          {
+            date: '모레',
+            temperature: 20,
+            humidity: 60,
+            uvIndex: 4,
+            condition: '맑음',
+            pm10: 40,
+            pm25: 22,
+          },
+        ])
+      }
+    }
+    loadWeather()
   }, [])
 
   const handleDayToggle = (day: number) => {
@@ -281,11 +290,20 @@ const JoggingConfigPage = () => {
                     <div>습도: {w.humidity}%</div>
                     <div>자외선: {w.uvIndex}</div>
                     <div>날씨: {w.condition}</div>
-                    {w.pm10 !== undefined && (
-                      <div>미세먼지: PM10 {w.pm10}㎍/㎥</div>
+                    {w.pm10 !== undefined && w.pm10 !== null ? (
+                      <div>미세먼지: PM10 {w.pm10} ㎍/㎥</div>
+                    ) : (
+                      <div>미세먼지: 없음</div>
                     )}
-                    {w.pm25 !== undefined && (
-                      <div>초미세먼지: PM2.5 {w.pm25}㎍/㎥</div>
+                    {w.pm25 !== undefined && w.pm25 !== null ? (
+                      <div>초미세먼지: PM2.5 {w.pm25} ㎍/㎥</div>
+                    ) : (
+                      <div>초미세먼지: 없음</div>
+                    )}
+                    {w.o3 !== undefined && w.o3 !== null ? (
+                      <div>오존: O3 {w.o3} ppm</div>
+                    ) : (
+                      <div>오존: 없음</div>
                     )}
                   </div>
                 </motion.div>

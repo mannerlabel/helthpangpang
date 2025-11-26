@@ -902,15 +902,48 @@ const CrewMeetingView = ({
     }
   }, [myVideoStream])
 
-  // remoteStreams가 변경될 때 각 참여자 비디오 요소에 스트림 설정
+  // remoteStreams가 변경될 때 각 참여자 비디오 요소에 스트림 설정 및 참여자 상태 업데이트
   useEffect(() => {
     remoteStreams.forEach((stream, userId) => {
       const videoElement = participantVideoRefs.current.get(userId)
+      
+      // 원격 스트림의 비디오/오디오 트랙 확인 및 참여자 상태 업데이트
+      const videoTracks = stream.getVideoTracks()
+      const audioTracks = stream.getAudioTracks()
+      const hasVideo = videoTracks.length > 0 && videoTracks[0].enabled && !videoTracks[0].muted
+      const hasAudio = audioTracks.length > 0 && audioTracks[0].enabled && !audioTracks[0].muted
+      
+      console.log(`🔍 참여자 ${userId} 스트림 상태 확인:`, {
+        hasVideo,
+        hasAudio,
+        videoTracksCount: videoTracks.length,
+        audioTracksCount: audioTracks.length,
+        videoTrackEnabled: videoTracks[0]?.enabled,
+        videoTrackMuted: videoTracks[0]?.muted,
+        audioTrackEnabled: audioTracks[0]?.enabled,
+        audioTrackMuted: audioTracks[0]?.muted,
+      })
+      
+      // 참여자 상태 업데이트 (원격 스트림의 실제 상태 반영)
+      setParticipants(prev => prev.map(p => {
+        if (p.userId === userId) {
+          return {
+            ...p,
+            videoEnabled: hasVideo,
+            audioEnabled: hasAudio,
+          }
+        }
+        return p
+      }))
+      
       if (videoElement && videoElement.srcObject !== stream) {
         console.log(`🔄 Remote stream 업데이트: ${userId}`, {
           streamId: stream.id,
           videoTracks: stream.getVideoTracks().length,
+          audioTracks: stream.getAudioTracks().length,
           streamActive: stream.active,
+          hasVideo,
+          hasAudio,
         })
         videoElement.srcObject = stream
         
@@ -954,6 +987,49 @@ const CrewMeetingView = ({
           playVideo()
         }
       }
+      
+      // 스트림 트랙 상태 변경 감지
+      videoTracks.forEach(track => {
+        track.onended = () => {
+          console.log(`⚠️ 참여자 ${userId} 비디오 트랙 종료`)
+          setParticipants(prev => prev.map(p => 
+            p.userId === userId ? { ...p, videoEnabled: false } : p
+          ))
+        }
+        track.onmute = () => {
+          console.log(`⚠️ 참여자 ${userId} 비디오 트랙 음소거`)
+          setParticipants(prev => prev.map(p => 
+            p.userId === userId ? { ...p, videoEnabled: false } : p
+          ))
+        }
+        track.onunmute = () => {
+          console.log(`✅ 참여자 ${userId} 비디오 트랙 음소거 해제`)
+          setParticipants(prev => prev.map(p => 
+            p.userId === userId ? { ...p, videoEnabled: true } : p
+          ))
+        }
+      })
+      
+      audioTracks.forEach(track => {
+        track.onended = () => {
+          console.log(`⚠️ 참여자 ${userId} 오디오 트랙 종료`)
+          setParticipants(prev => prev.map(p => 
+            p.userId === userId ? { ...p, audioEnabled: false } : p
+          ))
+        }
+        track.onmute = () => {
+          console.log(`⚠️ 참여자 ${userId} 오디오 트랙 음소거`)
+          setParticipants(prev => prev.map(p => 
+            p.userId === userId ? { ...p, audioEnabled: false } : p
+          ))
+        }
+        track.onunmute = () => {
+          console.log(`✅ 참여자 ${userId} 오디오 트랙 음소거 해제`)
+          setParticipants(prev => prev.map(p => 
+            p.userId === userId ? { ...p, audioEnabled: true } : p
+          ))
+        }
+      })
     })
   }, [remoteStreams])
 
@@ -1687,7 +1763,7 @@ const CrewMeetingView = ({
 
   return (
     <motion.div
-      className="bg-gray-900/95 rounded-t-2xl overflow-hidden fixed left-0 right-0 z-30"
+      className="bg-gray-900/95 rounded-t-2xl overflow-hidden fixed left-0 right-0 z-50"
       style={{ 
         height: `${height}px`,
         bottom: 'env(safe-area-inset-bottom, 0px)',

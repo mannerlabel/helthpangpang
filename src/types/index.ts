@@ -171,6 +171,10 @@ export interface WeatherInfo {
   condition: string // 날씨 상태 (맑음, 흐림 등)
   pm10?: number // 미세먼지 (PM10)
   pm25?: number // 초미세먼지 (PM2.5)
+  o3?: number // 오존 (O3, ppm)
+  pm10Grade?: string | null // 미세먼지 등급 (좋음, 보통, 나쁨, 매우나쁨)
+  pm25Grade?: string | null // 초미세먼지 등급
+  o3Grade?: string | null // 오존 등급
 }
 
 export interface JoggingData {

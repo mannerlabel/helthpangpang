@@ -7,6 +7,7 @@ import { JoggingGoal, JoggingConfig, WeatherInfo } from '@/types'
 import { databaseService } from '@/services/databaseService'
 import { authService } from '@/services/authService'
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
+import { getWeatherInfo } from '@/services/weatherService'
 
 const JoggingAlonePage = () => {
   const navigate = useNavigate()
@@ -102,36 +103,44 @@ const JoggingAlonePage = () => {
   }
 
   const handleStart = async (goal: JoggingGoal) => {
-    // 날씨 정보 가져오기 (모킹 데이터)
-    const mockWeather: WeatherInfo[] = [
-      {
-        date: '오늘',
-        temperature: 22,
-        humidity: 65,
-        uvIndex: 5,
-        condition: '맑음',
-        pm10: 45,
-        pm25: 25,
-      },
-      {
-        date: '내일',
-        temperature: 24,
-        humidity: 70,
-        uvIndex: 6,
-        condition: '구름조금',
-        pm10: 50,
-        pm25: 28,
-      },
-      {
-        date: '모레',
-        temperature: 20,
-        humidity: 60,
-        uvIndex: 4,
-        condition: '맑음',
-        pm10: 40,
-        pm25: 22,
-      },
-    ]
+    // 실시간 날씨 정보 가져오기
+    let weatherData: WeatherInfo[] = []
+    try {
+      const { weather } = await getWeatherInfo()
+      weatherData = weather
+    } catch (error) {
+      console.error('날씨 정보 가져오기 실패:', error)
+      // 기본값 사용
+      weatherData = [
+        {
+          date: '오늘',
+          temperature: 22,
+          humidity: 65,
+          uvIndex: 5,
+          condition: '맑음',
+          pm10: 45,
+          pm25: 25,
+        },
+        {
+          date: '내일',
+          temperature: 24,
+          humidity: 70,
+          uvIndex: 6,
+          condition: '구름조금',
+          pm10: 50,
+          pm25: 28,
+        },
+        {
+          date: '모레',
+          temperature: 20,
+          humidity: 60,
+          uvIndex: 4,
+          condition: '맑음',
+          pm10: 40,
+          pm25: 22,
+        },
+      ]
+    }
 
     const config: JoggingConfig = {
       mode: 'alone',
@@ -144,7 +153,7 @@ const JoggingAlonePage = () => {
     navigate('/jogging', {
       state: {
         config,
-        weather: mockWeather,
+        weather: weatherData,
       },
     })
   }

@@ -1,21 +1,50 @@
 import { AIAnalysis, ExerciseSession, ExerciseType } from '@/types'
 import { EXERCISE_TYPES, EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
+import { adminService } from './adminService'
 
 class AIAnalysisService {
   private apiUrl: string
-  private openaiApiKey: string
+  private openaiApiKey: string | null = null
+  private apiKeyCache: { key: string | null; timestamp: number } = { key: null, timestamp: 0 }
+  private readonly CACHE_DURATION = 5 * 60 * 1000 // 5분 캐시
 
   constructor() {
-    // 환경 변수에서 API URL 및 OpenAI API Key 가져오기
+    // 환경 변수에서 API URL 가져오기
     this.apiUrl = import.meta.env.VITE_AI_API_URL || ''
-    this.openaiApiKey = import.meta.env.VITE_OPENAI_API_KEY || ''
+    // API Key는 DB에서 동적으로 가져옴
+  }
+
+  // DB에서 LLM API Key 가져오기 (캐시 사용)
+  private async getApiKey(): Promise<string | null> {
+    const now = Date.now()
+    // 캐시가 유효하면 캐시된 키 사용
+    if (this.apiKeyCache.key && (now - this.apiKeyCache.timestamp) < this.CACHE_DURATION) {
+      return this.apiKeyCache.key
+    }
+
+    try {
+      // DB에서 API Key 가져오기
+      const apiKey = await adminService.getApiKey('llm')
+      this.apiKeyCache = { key: apiKey, timestamp: now }
+      return apiKey
+    } catch (error) {
+      console.error('LLM API Key 가져오기 실패:', error)
+      // 환경 변수에서 폴백
+      const envKey = import.meta.env.VITE_OPENAI_API_KEY || ''
+      if (envKey) {
+        this.apiKeyCache = { key: envKey, timestamp: now }
+        return envKey
+      }
+      return null
+    }
   }
 
   async analyzeExercise(session: ExerciseSession): Promise<AIAnalysis> {
     // OpenAI API 직접 호출
-    if (this.openaiApiKey) {
+    const apiKey = await this.getApiKey()
+    if (apiKey) {
       try {
-        const analysis = await this.callOpenAI(session)
+        const analysis = await this.callOpenAI(session, apiKey)
         if (analysis) {
           return analysis
         }
@@ -53,8 +82,8 @@ class AIAnalysisService {
     return this.generateDefaultAnalysis(session)
   }
 
-  private async callOpenAI(session: ExerciseSession): Promise<AIAnalysis | null> {
-    if (!this.openaiApiKey) return null
+  private async callOpenAI(session: ExerciseSession, apiKey: string): Promise<AIAnalysis | null> {
+    if (!apiKey) return null
 
     const exerciseName =
       session.config.type === EXERCISE_TYPES.CUSTOM
@@ -87,7 +116,7 @@ class AIAnalysisService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.openaiApiKey}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
           model: 'gpt-4o-mini',
