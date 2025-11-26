@@ -34,9 +34,22 @@ export const usePoseDetection = (videoRef: React.RefObject<HTMLVideoElement>, en
     }
 
     let isRunning = true
+    let lastDetectionTime = 0
+    const targetFPS = 18 // 18fps로 조정 (자세 측정에는 충분하며 성능 최적화)
+    const frameInterval = 1000 / targetFPS // 약 55.5ms
 
     const detect = async () => {
       if (!isRunning) return
+      
+      const currentTime = Date.now()
+      const timeSinceLastDetection = currentTime - lastDetectionTime
+      
+      // 프레임레이트 제한: 마지막 감지 후 충분한 시간이 지났는지 확인
+      if (timeSinceLastDetection < frameInterval) {
+        // 아직 시간이 안 지났으면 다음 프레임에서 다시 시도
+        animationFrameRef.current = requestAnimationFrame(detect)
+        return
+      }
       
       // 초기화 상태를 다시 확인
       if (!poseDetectionService.getInitialized()) {
@@ -50,6 +63,7 @@ export const usePoseDetection = (videoRef: React.RefObject<HTMLVideoElement>, en
       if (videoRef.current && videoRef.current.readyState === 4) {
         try {
           const detectedPoses = await poseDetectionService.detectPose(videoRef.current)
+          lastDetectionTime = currentTime
           if (isRunning) {
             setPoses(detectedPoses)
           }

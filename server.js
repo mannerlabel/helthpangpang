@@ -31,6 +31,7 @@ const httpsOptions = {
 }
 
 // 포트 설정 (환경 변수 또는 기본값)
+// 공유기 포워딩: 외부 7677 -> 내부 3000
 const PORT = process.env.PORT || 3000
 let MODE = process.env.NODE_ENV || 'production'
 
@@ -67,7 +68,7 @@ async function startServer() {
       server.listen(PORT, '0.0.0.0', () => {
         console.log(`🚀 HTTPS 서버가 실행 중입니다:`)
         console.log(`   로컬 접속: https://localhost:${PORT}`)
-        console.log(`   외부 접속: https://vinedev.monster:${PORT}`)
+        console.log(`   외부 접속: https://vinedev.monster:7677 (공유기 포워딩: 7677 -> ${PORT})`)
         console.log(`   모든 인터페이스: https://0.0.0.0:${PORT}`)
         console.log(`   모드: ${MODE}`)
         console.log(`   카메라 접근을 위해 HTTPS 필수입니다.`)
@@ -104,7 +105,7 @@ async function startServer() {
       await viteServer.listen(PORT)
       console.log(`🚀 Vite HTTPS 개발 서버가 실행 중입니다:`)
       console.log(`   로컬 접속: https://localhost:${PORT}`)
-      console.log(`   외부 접속: https://vinedev.monster:${PORT}`)
+      console.log(`   외부 접속: https://vinedev.monster:7677 (공유기 포워딩: 7677 -> ${PORT})`)
       console.log(`   모든 인터페이스: https://0.0.0.0:${PORT}`)
       console.log(`   모드: ${MODE}`)
       console.log(`   카메라 접근을 위해 HTTPS 필수입니다.`)

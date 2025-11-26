@@ -3,11 +3,13 @@
  * Zoom 스타일 영상 화면
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { databaseService, CrewMember, User } from '@/services/databaseService'
 import { authService } from '@/services/authService'
 import { rankService } from '@/services/rankService'
+import { webrtcService } from '@/services/webrtcService'
+import { signalingService } from '@/services/signalingService'
 import RankBadge from '@/components/RankBadge'
 
 interface Participant {
@@ -33,6 +35,7 @@ interface CrewMeetingViewProps {
   onHeightChange?: (height: number) => void // 높이 변경 콜백
   onEntryMessage?: (message: string) => void // 입장 메시지 콜백 (데이터베이스에 저장하지 않음)
   crewType?: 'crew' | 'jogging' // 크루 타입 (기본값: 'crew')
+  sharedVideoStream?: MediaStream | null // 공유 비디오 스트림 (자세 측정용 카메라 스트림)
 }
 
 const CrewMeetingView = ({
@@ -47,28 +50,281 @@ const CrewMeetingView = ({
   onHeightChange,
   onEntryMessage,
   crewType = 'crew',
+  sharedVideoStream,
 }: CrewMeetingViewProps) => {
   const [participants, setParticipants] = useState<Participant[]>([])
   const [myVideoStream, setMyVideoStream] = useState<MediaStream | null>(null)
+  const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map())
+  const [connectionStates, setConnectionStates] = useState<Map<string, string>>(new Map())
   const myVideoRef = useRef<HTMLVideoElement>(null)
   const participantVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map())
   const [height, setHeight] = useState(120) // 현재 높이 (px)
   const [isExpanded, setIsExpanded] = useState(false) // 펼쳐진 상태 여부
   const [userRanks, setUserRanks] = useState<Record<string, number>>({}) // 사용자별 계급 캐시
+  const isWebRTCInitialized = useRef(false)
+  const currentUserUuidRef = useRef<string | null>(null) // 현재 사용자 UUID 캐시
+  const previousCrewIdRef = useRef<string | null>(null) // 이전 crewId 추적
+  const [webRTCReinitTrigger, setWebRTCReinitTrigger] = useState(0) // WebRTC 재초기화 트리거
+  // 초기 화질 설정: 모든 환경에서 저화질 (참여자 미팅 영상은 기본적으로 저화질)
+  const getInitialVideoQuality = (): 'auto' | 'low' | 'medium' | 'high' => {
+    return 'low' // 모든 환경: 저화질
+  }
+  
+  const [videoQuality, setVideoQuality] = useState<'auto' | 'low' | 'medium' | 'high'>(getInitialVideoQuality()) // 화질 선택 상태
+  const [showQualityMenu, setShowQualityMenu] = useState(false) // 화질 선택 메뉴 표시 여부
+  const qualityMenuRef = useRef<HTMLDivElement>(null) // 화질 메뉴 참조 (외부 클릭 감지용)
+  
+  // 5명 이상일 때 자동으로 저화질로 설정 (한 번만)
+  useEffect(() => {
+    const activeVideoCount = participants.filter(p => p.status !== 'inactive' && p.videoEnabled).length + (myVideoEnabled ? 1 : 0)
+    if (activeVideoCount >= 5 && videoQuality === 'auto') {
+      // 자동 모드이고 5명 이상이면 저화질로 자동 전환 (사용자가 수동으로 선택한 경우는 유지)
+      console.log('📊 참여자 5명 이상 감지: 자동으로 저화질 모드 적용')
+    }
+  }, [participants.length, myVideoEnabled, videoQuality])
+  
+  // 메뉴 외부 클릭 시 닫기
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (qualityMenuRef.current && !qualityMenuRef.current.contains(event.target as Node)) {
+        setShowQualityMenu(false)
+      }
+    }
+    
+    if (showQualityMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside)
+      }
+    }
+  }, [showQualityMenu])
   
   // 높이 제한: 최소 높이와 최대 높이
   const COLLAPSED_HEIGHT = 120 // 접힌 상태 높이 (핸들바 + 제목)
   const MAX_HEIGHT = window.innerHeight * 0.7 // 최대 높이 (화면의 70%)
 
+  // WebRTC 초기화
   useEffect(() => {
-    loadParticipants()
-    loadUserRanks()
-    const interval = setInterval(() => {
+    // 강제로 로그 출력 (에러가 있어도 실행되도록)
+    try {
+      console.log('🔧 WebRTC 초기화 useEffect 실행', { 
+      crewId, 
+      isInitialized: isWebRTCInitialized.current, 
+      previousCrewId: previousCrewIdRef.current,
+      webRTCReinitTrigger,
+      componentMounted: true 
+    })
+    
+    // crewId가 변경되면 재초기화
+    if (previousCrewIdRef.current !== null && previousCrewIdRef.current !== crewId) {
+      console.log('🔄 crewId 변경 감지, WebRTC 재초기화:', { previous: previousCrewIdRef.current, current: crewId })
+      // 이전 크루의 채널 구독 해제
+      if (previousCrewIdRef.current) {
+        signalingService.unsubscribe(previousCrewIdRef.current).catch(err => {
+          console.warn('이전 크루 채널 구독 해제 실패:', err)
+        })
+      }
+      isWebRTCInitialized.current = false
+      console.log('🔄 isWebRTCInitialized 리셋 완료')
+    }
+    previousCrewIdRef.current = crewId
+    
+    if (isWebRTCInitialized.current) {
+      console.log('⚠️ WebRTC가 이미 초기화되었습니다. 재초기화를 원하면 컴포넌트를 언마운트 후 다시 마운트하세요.')
+      console.log('   현재 crewId:', crewId)
+      console.log('   이전 crewId:', previousCrewIdRef.current)
+      // 채널 구독 상태 확인
+      const isSubscribed = signalingService.isSubscribed(crewId)
+      console.log('   채널 구독 상태:', isSubscribed ? '구독됨' : '구독 안 됨')
+      if (!isSubscribed) {
+        console.log('   ⚠️ 채널이 구독되지 않았습니다. 재구독을 시도합니다...')
+        // 채널이 구독되지 않았으면 재구독 시도
+        isWebRTCInitialized.current = false
+        console.log('   🔄 isWebRTCInitialized를 false로 리셋, 재초기화 진행')
+        // 아래 초기화 로직 계속 실행
+      } else {
+        console.log('   ✅ 채널이 구독되어 있습니다. 재초기화 불필요')
+        return
+      }
+    }
+    isWebRTCInitialized.current = true
+    console.log('✅ isWebRTCInitialized를 true로 설정, 초기화 시작')
+
+    const initializeWebRTC = async () => {
+      try {
+        console.log('🚀 WebRTC 초기화 시작...', crewId)
+        const user = authService.getCurrentUser()
+        if (!user) {
+          console.warn('⚠️ WebRTC 초기화: 사용자가 로그인하지 않았습니다')
+          return
+        }
+        console.log('✅ 사용자 확인 완료:', user.id)
+
+        // 현재 사용자 ID 업데이트 (UUID도 함께 전달)
+        const userUuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        if (userUuidRegex.test(user.id)) {
+          // 이미 UUID인 경우
+          signalingService.updateCurrentUserId(user.id)
+        } else {
+          // localStorage ID인 경우, UUID를 찾아서 전달
+          // currentUserUuidRef가 이미 설정되어 있을 수 있음
+          signalingService.updateCurrentUserId(user.id, currentUserUuidRef.current || undefined)
+        }
+
+        // Signaling 채널 구독 (재시도 로직 포함)
+        let subscribeAttempts = 0
+        const maxSubscribeAttempts = 3
+        let subscribeSuccess = false
+        
+        while (subscribeAttempts < maxSubscribeAttempts && !subscribeSuccess) {
+          try {
+            subscribeAttempts++
+            console.log(`📡 Signaling 채널 구독 시도 중... (${subscribeAttempts}/${maxSubscribeAttempts})`, crewId)
+            await signalingService.subscribe(crewId)
+            
+            // 구독 성공 확인 (약간의 지연 후 확인)
+            await new Promise(resolve => setTimeout(resolve, 500))
+            if (signalingService.isSubscribed(crewId)) {
+              console.log('✅ Signaling 채널 구독 성공:', crewId)
+              subscribeSuccess = true
+            } else {
+              console.warn(`⚠️ 채널 구독 후 확인 실패 (${subscribeAttempts}/${maxSubscribeAttempts}), 재시도 중...`)
+              if (subscribeAttempts < maxSubscribeAttempts) {
+                await new Promise(resolve => setTimeout(resolve, 1000)) // 1초 대기 후 재시도
+              }
+            }
+          } catch (subscribeError) {
+            console.error(`⚠️ Signaling 채널 구독 실패 (${subscribeAttempts}/${maxSubscribeAttempts}):`, subscribeError)
+            console.error('   구독 실패 원인:', subscribeError instanceof Error ? subscribeError.message : String(subscribeError))
+            
+            if (subscribeAttempts < maxSubscribeAttempts) {
+              console.log(`   재시도 중... (${subscribeAttempts + 1}/${maxSubscribeAttempts})`)
+              await new Promise(resolve => setTimeout(resolve, 1000)) // 1초 대기 후 재시도
+            } else {
+              console.error('   💡 Supabase Realtime이 활성화되어 있는지 확인해주세요.')
+              console.error('   💡 네트워크 연결 상태를 확인해주세요.')
+              // 구독 실패해도 앱은 계속 작동 (WebRTC 없이도 기본 기능 사용 가능)
+              // 사용자에게 알림은 하지 않음 (조용히 실패)
+              return
+            }
+          }
+        }
+        
+        if (!subscribeSuccess) {
+          console.error('❌ 채널 구독 최종 실패: 모든 재시도 실패')
+          return
+        }
+
+        // Remote stream 수신 처리
+        const unsubscribeRemoteStream = webrtcService.onRemoteStream(
+          (userId, stream) => {
+            if (stream) {
+              setRemoteStreams((prev) => {
+                const newMap = new Map(prev)
+                newMap.set(userId, stream)
+                return newMap
+              })
+            } else {
+              setRemoteStreams((prev) => {
+                const newMap = new Map(prev)
+                newMap.delete(userId)
+                return newMap
+              })
+            }
+          }
+        )
+
+        // 연결 상태 변경 처리
+        const unsubscribeConnectionState = webrtcService.onConnectionStateChange(
+          (userId, state) => {
+            setConnectionStates((prev) => {
+              const newMap = new Map(prev)
+              newMap.set(userId, state.iceConnectionState)
+              return newMap
+            })
+          }
+        )
+
+        return () => {
+          unsubscribeRemoteStream()
+          unsubscribeConnectionState()
+          signalingService.unsubscribe(crewId)
+          webrtcService.closeAllConnections()
+        }
+      } catch (error) {
+        console.error('❌ WebRTC 초기화 실패:', error)
+        // 초기화 실패 시 리셋하여 재시도 가능하도록 함
+        isWebRTCInitialized.current = false
+        console.log('🔄 초기화 실패로 인해 isWebRTCInitialized를 false로 리셋')
+      }
+    }
+
+    const cleanup = initializeWebRTC()
+
+    return () => {
+      console.log('🧹 WebRTC cleanup 실행', { crewId })
+      cleanup.then((cleanupFn) => {
+        if (cleanupFn) {
+          cleanupFn()
+        }
+      }).catch(err => {
+        console.warn('Cleanup 함수 실행 실패:', err)
+      })
+      isWebRTCInitialized.current = false
+      console.log('🔄 cleanup 완료, isWebRTCInitialized를 false로 리셋')
+      }
+    } catch (error) {
+      console.error('❌ WebRTC 초기화 useEffect 실행 중 에러:', error)
+    }
+  }, [crewId, webRTCReinitTrigger]) // crewId나 webRTCReinitTrigger가 변경되면 재실행
+
+  // 디버깅: useEffect 실행 확인
+  useEffect(() => {
+    console.log('🔍 CrewMeetingView 컴포넌트 마운트/업데이트 확인', {
+      crewId,
+      myVideoEnabled,
+      componentMounted: true,
+      timestamp: new Date().toISOString(),
+    })
+  })
+
+
+  // myVideoEnabled가 true로 변경될 때 WebRTC 연결 즉시 시작
+  useEffect(() => {
+    if (!crewId || !myVideoEnabled) return
+    
+    console.log('🎥 myVideoEnabled가 true로 변경됨, WebRTC 연결 즉시 시작 시도', { 
+      crewId, 
+      myVideoEnabled,
+      isSubscribed: signalingService.isSubscribed(crewId),
+      isWebRTCInitialized: isWebRTCInitialized.current,
+    })
+    
+    // 채널이 구독되지 않았으면 WebRTC 재초기화 트리거
+    if (!signalingService.isSubscribed(crewId)) {
+      console.warn('⚠️ 채널이 구독되지 않았습니다. WebRTC 재초기화를 트리거합니다...')
+      // isWebRTCInitialized를 false로 리셋하고 재초기화 트리거 증가
+      isWebRTCInitialized.current = false
+      setWebRTCReinitTrigger(prev => prev + 1) // WebRTC 초기화 useEffect 재실행 트리거
+      console.log('🔄 isWebRTCInitialized를 false로 리셋, WebRTC 초기화 재시도 트리거')
+      // WebRTC 초기화 useEffect가 자동으로 재실행되어 채널 구독을 시도함
+      // 약간의 지연 후 loadParticipants 호출 (채널 구독 완료 대기)
+      const timer = setTimeout(() => {
+        console.log('🔄 myVideoEnabled 변경 후 loadParticipants 재호출 (채널 구독 대기)')
+        loadParticipants()
+      }, 2000) // 2초 후 재시도 (채널 구독 완료 대기)
+      return () => clearTimeout(timer)
+    }
+    
+    // 채널이 이미 구독되어 있으면 즉시 loadParticipants 호출
+    console.log('✅ 채널이 이미 구독되어 있습니다. 즉시 loadParticipants 호출')
+    const timer = setTimeout(() => {
+      console.log('🔄 myVideoEnabled 변경 후 loadParticipants 재호출')
       loadParticipants()
-      loadUserRanks()
-    }, 2000) // 2초마다 갱신
-    return () => clearInterval(interval)
-  }, [crewId])
+    }, 500) // 0.5초 후 재시도
+    
+    return () => clearTimeout(timer)
+  }, [myVideoEnabled, crewId]) // myVideoEnabled가 true로 변경될 때만 실행
 
   // 사용자 계급 로드
   const loadUserRanks = async () => {
@@ -96,8 +352,21 @@ const CrewMeetingView = ({
     }
   }, [participants.length])
   
-  // 디버깅: 활성 사용자 감지 로그
+  // 디버깅: 활성 사용자 감지 로그 (useRef로 이전 값 추적하여 무한 루프 방지)
+  const previousParticipantsRef = useRef<string>('')
   useEffect(() => {
+    const participantsKey = JSON.stringify(participants.map(p => ({
+      userId: p.userId,
+      status: p.status,
+      videoEnabled: p.videoEnabled,
+    })))
+    
+    // 이전 값과 같으면 로그 출력하지 않음 (무한 루프 방지)
+    if (previousParticipantsRef.current === participantsKey) {
+      return
+    }
+    previousParticipantsRef.current = participantsKey
+    
     console.log('참여자 상태 업데이트:', {
       participants: participants.map(p => ({
         name: p.userName,
@@ -109,21 +378,363 @@ const CrewMeetingView = ({
       activeCount: participants.filter(p => p.status !== 'inactive').length,
       totalCount: participants.length,
     })
-  }, [participants])
+  }, [participants]) // participants는 dependency로 유지하되, 내부에서 중복 체크
 
+  // 화질 설정 정의
+  const qualityPresets = {
+    high: {
+      width: { ideal: 1280, min: 640, max: 1920 },
+      height: { ideal: 720, min: 360, max: 1080 },
+      frameRate: { ideal: 30, max: 30, min: 20 },
+      bitrate: 2000000, // 2Mbps
+      label: '고화질 (HD)',
+      description: '1280x720 @ 30fps',
+    },
+    medium: {
+      width: { ideal: 640, min: 480, max: 1280 },
+      height: { ideal: 360, min: 270, max: 720 },
+      frameRate: { ideal: 20, max: 25, min: 15 },
+      bitrate: 1000000, // 1Mbps
+      label: '중간 화질 (SD)',
+      description: '640x360 @ 20fps',
+    },
+    low: {
+      width: { ideal: 480, min: 320, max: 640 },
+      height: { ideal: 270, min: 180, max: 360 },
+      frameRate: { ideal: 15, max: 20, min: 10 },
+      bitrate: 500000, // 500Kbps
+      label: '저화질',
+      description: '480x270 @ 15fps',
+    },
+  }
+
+  // 참여자 수에 따른 비디오 품질 계산
+  const getVideoQuality = (participantCount: number, userSelectedQuality?: 'auto' | 'low' | 'medium' | 'high') => {
+    const activeVideoCount = participantCount
+    const selectedQuality = userSelectedQuality || videoQuality
+    
+    // 사용자가 수동으로 선택한 경우
+    if (selectedQuality !== 'auto' && selectedQuality in qualityPresets) {
+      return qualityPresets[selectedQuality as keyof typeof qualityPresets]
+    }
+    
+    // 자동 모드: 기본값은 중간 화질, 5명 이상일 때만 저화질
+    if (activeVideoCount >= 5) {
+      // 5명 이상: 저화질 (자동)
+      return qualityPresets.low
+    } else {
+      // 1-4명: 중간 화질 (기본값)
+      return qualityPresets.medium
+    }
+  }
+
+  // 입장 시 초기 스트림 획득 보장 (마운트 시 한 번만 실행)
+  const hasInitializedRef = useRef(false)
   useEffect(() => {
-    // 내 영상 스트림 설정
+    if (!hasInitializedRef.current && myVideoEnabled && !myVideoStream) {
+      console.log('🚀 입장 시 초기 스트림 획득 시도', {
+        myVideoEnabled,
+        hasMyVideoStream: !!myVideoStream,
+      })
+      hasInitializedRef.current = true
+      // 스트림 획득을 위해 의도적으로 상태 변경 (useEffect 재실행 유도)
+      // 아래 useEffect가 실행되도록 함
+    }
+  }, []) // 마운트 시 한 번만 실행
+
+  // 공유 스트림이 있으면 사용 (카메라 스트림 공유 최적화)
+  useEffect(() => {
+    if (!sharedVideoStream || !myVideoEnabled) {
+      return // 공유 스트림이 없거나 비디오가 비활성화된 경우
+    }
+    
+    console.log('🔄 공유 스트림 사용 (카메라 스트림 공유 최적화)', {
+      streamId: sharedVideoStream.id,
+      active: sharedVideoStream.active,
+      videoTracks: sharedVideoStream.getVideoTracks().length,
+      hasMyVideoStream: !!myVideoStream,
+    })
+    
+    // 공유 스트림의 비디오 트랙 가져오기
+    const sharedVideoTrack = sharedVideoStream.getVideoTracks()[0]
+    if (!sharedVideoTrack) {
+      console.warn('⚠️ 공유 스트림에 비디오 트랙이 없습니다')
+      return
+    }
+    
+    // 현재 스트림 확인
+    const currentVideoTrack = myVideoStream?.getVideoTracks()[0]
+    const isUsingSharedTrack = currentVideoTrack === sharedVideoTrack
+    
+    if (!isUsingSharedTrack) {
+      // 공유 스트림을 사용하지 않는 경우, 새 스트림 생성
+      const newStream = new MediaStream([sharedVideoTrack])
+      
+      // 기존 스트림 정리 (공유 스트림이 아닌 경우만)
+      if (myVideoStream && currentVideoTrack && currentVideoTrack !== sharedVideoTrack) {
+        // 기존 비디오 트랙만 정리 (오디오는 유지)
+        const existingAudioTracks = myVideoStream.getAudioTracks()
+        existingAudioTracks.forEach(track => {
+          newStream.addTrack(track) // 기존 오디오 트랙 유지
+        })
+        currentVideoTrack.stop() // 기존 비디오 트랙만 정리
+      }
+      
+      // 오디오 처리
+      const hasAudio = newStream.getAudioTracks().length > 0
+      if (myAudioEnabled && !hasAudio) {
+        // 오디오 추가 필요
+        navigator.mediaDevices.getUserMedia({ audio: true })
+          .then(audioStream => {
+            audioStream.getAudioTracks().forEach(track => {
+              newStream.addTrack(track)
+            })
+            setMyVideoStream(newStream)
+            webrtcService.setLocalStream(newStream)
+            console.log('✅ 공유 스트림 + 오디오 설정 완료')
+          })
+          .catch(error => {
+            console.warn('⚠️ 오디오 획득 실패, 비디오만 사용:', error)
+            setMyVideoStream(newStream)
+            webrtcService.setLocalStream(newStream)
+          })
+      } else if (!myAudioEnabled && hasAudio) {
+        // 오디오 제거 필요
+        newStream.getAudioTracks().forEach(track => {
+          track.stop()
+          newStream.removeTrack(track)
+        })
+        setMyVideoStream(newStream)
+        webrtcService.setLocalStream(newStream)
+        console.log('✅ 공유 스트림 설정 완료 (오디오 제거)')
+      } else {
+        // 오디오 상태가 맞음
+        setMyVideoStream(newStream)
+        webrtcService.setLocalStream(newStream)
+        console.log('✅ 공유 스트림 설정 완료')
+      }
+    } else {
+      // 이미 공유 스트림을 사용 중이면 오디오만 확인
+      const hasAudio = myVideoStream.getAudioTracks().length > 0
+      if (hasAudio !== myAudioEnabled) {
+        if (myAudioEnabled) {
+          // 오디오 추가
+          navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(audioStream => {
+              audioStream.getAudioTracks().forEach(track => {
+                myVideoStream.addTrack(track)
+              })
+              webrtcService.setLocalStream(myVideoStream)
+              console.log('✅ 오디오 추가 완료')
+            })
+            .catch(error => {
+              console.warn('⚠️ 오디오 추가 실패:', error)
+            })
+        } else {
+          // 오디오 제거
+          myVideoStream.getAudioTracks().forEach(track => {
+            track.stop()
+            myVideoStream.removeTrack(track)
+          })
+          webrtcService.setLocalStream(myVideoStream)
+          console.log('✅ 오디오 제거 완료')
+        }
+      }
+    }
+  }, [sharedVideoStream, myVideoEnabled, myAudioEnabled, myVideoStream])
+
+  // 화질 변경 강제 재획득 플래그
+  const forceReacquireRef = useRef(false)
+  
+  useEffect(() => {
+    // 내 영상 스트림 설정 (공유 스트림이 없는 경우에만)
+    if (sharedVideoStream && myVideoEnabled) {
+      return // 공유 스트림이 있으면 위 useEffect에서 처리
+    }
+    
+    const activeVideoCount = participants.filter(p => p.status !== 'inactive' && p.videoEnabled).length + (myVideoEnabled ? 1 : 0)
+    const quality = getVideoQuality(activeVideoCount, videoQuality)
+    
+    console.log('🎥 카메라 스트림 useEffect 실행', { 
+      myVideoEnabled, 
+      myAudioEnabled, 
+      hasMyVideoStream: !!myVideoStream,
+      activeVideoCount,
+      videoQuality,
+      forceReacquire: forceReacquireRef.current,
+      quality: {
+        resolution: `${quality.width.ideal}x${quality.height.ideal}`,
+        frameRate: quality.frameRate.ideal,
+        bitrate: `${quality.bitrate / 1000}Kbps`,
+      },
+    })
+    
     if (myVideoEnabled) {
-      navigator.mediaDevices
-        .getUserMedia({ video: true, audio: false })
-        .then((stream) => {
-          setMyVideoStream(stream)
-          if (myVideoRef.current) {
-            myVideoRef.current.srcObject = stream
+      console.log('🎥 카메라 스트림 획득 시작...', { myVideoEnabled, myAudioEnabled, activeVideoCount, quality, videoQuality })
+      
+      // 화질 변경으로 인한 강제 재획득인 경우
+      if (forceReacquireRef.current) {
+        console.log('🔄 화질 변경으로 인한 강제 재획득')
+        if (myVideoStream) {
+          const currentVideoTrack = myVideoStream.getVideoTracks()[0]
+          const sharedVideoTrack = sharedVideoStream?.getVideoTracks()[0]
+          // 공유 스트림의 트랙이 아닌 경우만 stop
+          if (!sharedVideoStream || currentVideoTrack !== sharedVideoTrack) {
+            console.log('🛑 기존 스트림 정리 (화질 변경)')
+            myVideoStream.getTracks().forEach(track => {
+              if (track !== sharedVideoTrack) {
+                track.stop()
+              }
+            })
           }
+          setMyVideoStream(null)
+        }
+        forceReacquireRef.current = false // 플래그 리셋
+        // 아래에서 스트림 재획득 계속 진행 (해상도 차이 체크 무시)
+      }
+      // 이미 스트림이 있으면 재획득하지 않음 (무한 루프 방지)
+      // 단, 화질 변경으로 인한 강제 재획득이 아닌 경우에만 체크
+      // 모바일에서 카메라 권한 재요청을 방지하기 위해 더 보수적으로 처리
+      else if (myVideoStream && myVideoStream.active && !forceReacquireRef.current) {
+        const currentSettings = myVideoStream.getVideoTracks()[0]?.getSettings()
+        const currentWidth = currentSettings?.width || 0
+        const currentHeight = currentSettings?.height || 0
+        const targetWidth = typeof quality.width.ideal === 'number' ? quality.width.ideal : 1280
+        const targetHeight = typeof quality.height.ideal === 'number' ? quality.height.ideal : 720
+        
+        // 해상도가 크게 다르면 재획득 (50% 이상 차이 - 더 보수적으로 변경)
+        // 모바일에서 카메라 권한 재요청을 최소화하기 위해 임계값을 높임
+        const widthDiff = Math.abs(currentWidth - targetWidth) / Math.max(targetWidth, 1)
+        const heightDiff = Math.abs(currentHeight - targetHeight) / Math.max(targetHeight, 1)
+        
+        if (widthDiff < 0.5 && heightDiff < 0.5) {
+          console.log('✅ 이미 활성 스트림이 있습니다. 재획득하지 않습니다.', {
+            streamId: myVideoStream.id,
+            active: myVideoStream.active,
+            currentResolution: `${currentWidth}x${currentHeight}`,
+            targetResolution: `${targetWidth}x${targetHeight}`,
+            widthDiff: `${(widthDiff * 100).toFixed(1)}%`,
+            heightDiff: `${(heightDiff * 100).toFixed(1)}%`,
+          })
+          // 기존 스트림이 활성 상태이고 해상도 차이가 크지 않으면 재획득하지 않음
+          // 단, 오디오 상태가 변경된 경우는 스트림을 재획득해야 함 (모바일에서 권한 재요청 최소화를 위해 조건부 처리)
+          const hasAudioTrack = myVideoStream.getAudioTracks().length > 0
+          const needsAudio = myAudioEnabled
+          if (hasAudioTrack !== needsAudio) {
+            console.log('🔄 오디오 상태 변경 감지, 스트림 재획득 필요:', {
+              hasAudioTrack,
+              needsAudio,
+            })
+            // 오디오 상태 변경 시 스트림 재획득 (불가피하지만 최소화)
+            myVideoStream.getTracks().forEach(track => track.stop())
+            setMyVideoStream(null)
+            // 아래에서 스트림 재획득 계속 진행
+          } else {
+            // 해상도와 오디오 상태 모두 변경되지 않았으면 재획득하지 않음
+            return
+          }
+        } else {
+          console.log('🔄 참여자 수 변경으로 인한 해상도 조정 필요:', {
+            currentResolution: `${currentWidth}x${currentHeight}`,
+            targetResolution: `${targetWidth}x${targetHeight}`,
+            widthDiff: `${(widthDiff * 100).toFixed(1)}%`,
+            heightDiff: `${(heightDiff * 100).toFixed(1)}%`,
+          })
+          // 기존 스트림 정리
+          myVideoStream.getTracks().forEach(track => track.stop())
+          setMyVideoStream(null)
+        }
+      }
+      
+      // 미디어 디바이스 사용 가능 여부 확인
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.error('❌ 미디어 디바이스 API를 사용할 수 없습니다')
+        console.error('   HTTPS 연결이 필요합니다. 현재 프로토콜:', window.location.protocol)
+        console.error('   User Agent:', navigator.userAgent)
+        return
+      }
+      
+      console.log('📱 모바일 디바이스 확인:', {
+        isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
+        userAgent: navigator.userAgent,
+      })
+      
+      navigator.mediaDevices
+        .getUserMedia({ 
+          video: {
+            facingMode: 'user', // 전면 카메라 사용
+            width: quality.width,
+            height: quality.height,
+            frameRate: quality.frameRate,
+          }, 
+          audio: myAudioEnabled 
+        })
+        .then(async (stream) => {
+          console.log('✅ 내 영상 스트림 획득 성공:', {
+            streamId: stream.id,
+            videoTracks: stream.getVideoTracks().length,
+            audioTracks: stream.getAudioTracks().length,
+            active: stream.active,
+            videoTrackSettings: stream.getVideoTracks()[0]?.getSettings(),
+          })
+          setMyVideoStream(stream)
+          
+          // 스트림 상태 모니터링: 스트림이 종료되면 자동으로 재획득
+          stream.getVideoTracks().forEach((track) => {
+            track.onended = () => {
+              console.warn('⚠️ 비디오 트랙이 종료되었습니다. 재획득을 시도합니다...')
+              // 스트림 재획득을 위해 상태를 null로 설정
+              setMyVideoStream(null)
+              hasInitializedRef.current = false // 재획득 허용
+            }
+            track.onmute = () => {
+              console.warn('⚠️ 비디오 트랙이 음소거되었습니다.')
+            }
+            track.onunmute = () => {
+              console.log('✅ 비디오 트랙 음소거 해제됨')
+            }
+          })
+          
+          // 비디오 요소에 스트림 설정은 myVideoStream useEffect에서 처리
+          // 여기서는 스트림만 획득하고 상태에 저장
+          console.log('✅ 스트림 상태에 저장 완료, 비디오 요소는 myVideoStream useEffect에서 설정됩니다')
+          
+          // WebRTC 서비스에 로컬 스트림 설정
+          await webrtcService.setLocalStream(stream)
+          console.log('✅ WebRTC 서비스에 로컬 스트림 설정 완료')
         })
         .catch((error) => {
-          console.error('영상 스트림 가져오기 실패:', error)
+          console.error('❌ 영상 스트림 가져오기 실패:', error)
+          console.error('   에러 이름:', error.name)
+          console.error('   에러 메시지:', error.message)
+          if (error.name === 'NotAllowedError') {
+            console.error('   💡 카메라 권한이 거부되었습니다. 브라우저 설정에서 권한을 허용해주세요.')
+          } else if (error.name === 'NotFoundError') {
+            console.error('   💡 카메라를 찾을 수 없습니다. 카메라가 연결되어 있는지 확인해주세요.')
+          } else if (error.name === 'NotReadableError') {
+            console.error('   💡 카메라에 접근할 수 없습니다. 다른 앱에서 사용 중일 수 있습니다.')
+          } else {
+            // 기타 오류의 경우 재시도 (윈도우 PC에서 간혹 발생하는 문제 대응)
+            console.warn('   ⚠️ 스트림 획득 실패, 2초 후 재시도...')
+            const retryKey = `stream_retry_${crewId || 'default'}`
+            const retryCount = (window as any)[retryKey] || 0
+            if (retryCount < 5) {
+              (window as any)[retryKey] = retryCount + 1
+              setTimeout(() => {
+                // 스트림 재획득을 위해 상태를 null로 설정하여 useEffect 재실행 유도
+                if (!myVideoStream && myVideoEnabled) {
+                  console.log(`   🔄 스트림 재획득 시도... (${retryCount + 1}/5)`)
+                  hasInitializedRef.current = false // 재획득 허용
+                  // useEffect가 다시 실행되도록 하기 위해 의도적으로 상태 변경
+                  setMyVideoStream(null)
+                }
+              }, 2000) // 2초 후 재시도
+            } else {
+              console.error('   ❌ 스트림 획득 재시도 횟수 초과 (최대 5회)')
+              // 재시도 카운터 리셋 (나중에 다시 시도할 수 있도록)
+              delete (window as any)[retryKey]
+            }
+          }
         })
     } else {
       if (myVideoStream) {
@@ -132,15 +743,244 @@ const CrewMeetingView = ({
         if (myVideoRef.current) {
           myVideoRef.current.srcObject = null
         }
+        // WebRTC 서비스에서 로컬 스트림 제거
+        webrtcService.removeLocalStream()
       }
     }
 
     return () => {
-      if (myVideoStream) {
-        myVideoStream.getTracks().forEach((track) => track.stop())
+      // cleanup 함수는 컴포넌트 언마운트 시에만 실행
+      // 스트림 재획득 시에는 위에서 이미 정리함
+    }
+  }, [myVideoEnabled, myAudioEnabled, videoQuality, sharedVideoStream]) // videoQuality 변경 시 재획득 (participants.length 제거: 참여자 변경 시 스트림 재획득 방지)
+
+  // 각 참여자의 화질 정보 계산 함수
+  const getParticipantQuality = (participant: Participant, isCurrentUser: boolean = false): 'high' | 'medium' | 'low' => {
+    // 내 영상인 경우: 사용자가 선택한 화질 설정을 우선 표시
+    if (isCurrentUser) {
+      // 사용자가 선택한 화질 설정 확인
+      if (videoQuality === 'high') {
+        return 'high'
+      } else if (videoQuality === 'medium') {
+        return 'medium'
+      } else if (videoQuality === 'low') {
+        return 'low'
+      } else {
+        // auto 모드인 경우 참여자 수에 따라 결정
+        const activeVideoCount = participants.filter(p => p.status !== 'inactive' && p.videoEnabled).length + (myVideoEnabled ? 1 : 0)
+        if (activeVideoCount >= 5) {
+          return 'low'
+        } else {
+          return 'medium'
+        }
       }
     }
-  }, [myVideoEnabled])
+    
+    // 다른 참여자의 경우: 실제 스트림 해상도 확인 (가능한 경우)
+    const remoteStream = remoteStreams.get(participant.userId)
+    if (remoteStream) {
+      const videoTrack = remoteStream.getVideoTracks()[0]
+      if (videoTrack) {
+        const settings = videoTrack.getSettings()
+        const width = settings.width || 0
+        const height = settings.height || 0
+        
+        // 해상도에 따라 화질 판단
+        if (width >= 1280 || height >= 720) {
+          return 'high'
+        } else if (width >= 640 || height >= 360) {
+          return 'medium'
+        } else {
+          return 'low'
+        }
+      }
+    }
+    
+    // 스트림이 없으면 기본값 (자동 화질)
+    const activeVideoCount = participants.filter(p => p.status !== 'inactive' && p.videoEnabled).length + (myVideoEnabled ? 1 : 0)
+    if (activeVideoCount >= 5) {
+      return 'low'
+    } else {
+      return 'medium'
+    }
+  }
+
+  // myVideoStream이 변경될 때 비디오 요소에 스트림 설정
+  useEffect(() => {
+    if (myVideoStream) {
+      // 비디오 요소에 스트림 설정 함수
+      const setVideoStreamToElement = () => {
+        if (myVideoRef.current && myVideoStream) {
+          // 이미 같은 스트림이 설정되어 있으면 스킵
+          if (myVideoRef.current.srcObject === myVideoStream) {
+            console.log('✅ 비디오 요소에 이미 같은 스트림이 설정되어 있습니다.')
+            return true
+          }
+          
+          myVideoRef.current.srcObject = myVideoStream
+          console.log('✅ myVideoStream 변경: 비디오 요소에 스트림 설정 완료', {
+            streamId: myVideoStream.id,
+            videoTracks: myVideoStream.getVideoTracks().length,
+            elementReady: !!myVideoRef.current,
+            srcObjectSet: !!myVideoRef.current.srcObject,
+          })
+          
+          // 비디오 요소가 로드되었는지 확인
+          myVideoRef.current.onloadedmetadata = () => {
+            console.log('✅ 비디오 메타데이터 로드 완료')
+          }
+          myVideoRef.current.onerror = (error) => {
+            console.error('❌ 비디오 요소 오류:', error)
+          }
+          
+          // 모바일에서 autoplay 문제 해결을 위해 명시적으로 play 시도
+          // 모바일에서는 약간의 지연 후 재생 시도
+          const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+          const playVideo = () => {
+            if (myVideoRef.current) {
+              myVideoRef.current.play().then(() => {
+                console.log('✅ 비디오 재생 시작 성공')
+              }).catch((playError) => {
+                console.warn('⚠️ 비디오 재생 실패 (autoplay 정책):', playError)
+                console.warn('   사용자가 수동으로 재생해야 할 수 있습니다.')
+                // 모바일에서 재생 실패 시 한 번 더 시도
+                if (isMobile) {
+                  setTimeout(() => {
+                    if (myVideoRef.current) {
+                      myVideoRef.current.play().catch(() => {
+                        console.warn('⚠️ 비디오 재생 재시도 실패')
+                      })
+                    }
+                  }, 500)
+                }
+              })
+            }
+          }
+          
+          if (isMobile) {
+            // 모바일에서는 메타데이터 로드 후 재생
+            myVideoRef.current.onloadedmetadata = () => {
+              console.log('✅ 비디오 메타데이터 로드 완료 (모바일)')
+              setTimeout(playVideo, 100)
+            }
+          } else {
+            playVideo()
+          }
+          return true
+        }
+        return false
+      }
+      
+      // 즉시 시도
+      if (setVideoStreamToElement()) {
+        return // 성공하면 종료
+      }
+      
+      // 비디오 요소가 준비될 때까지 대기 (모바일에서 더 오래 대기)
+      let retryCount = 0
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+      const maxRetries = isMobile ? 50 : 30 // 모바일에서는 최대 5초 대기 (100ms * 50)
+      const setVideoStream = () => {
+        if (setVideoStreamToElement()) {
+          return // 성공
+        }
+        
+        retryCount++
+        if (retryCount < maxRetries) {
+          // ref가 아직 준비되지 않았으면 잠시 후 재시도
+          setTimeout(setVideoStream, 100)
+        } else {
+          console.warn('⚠️ 비디오 요소를 찾을 수 없습니다. 최대 재시도 횟수 초과:', maxRetries)
+          console.warn('   비디오 요소가 조건부 렌더링으로 아직 DOM에 없을 수 있습니다.')
+          console.warn('   참여자 목록이 업데이트되면 자동으로 설정됩니다.')
+        }
+      }
+      setVideoStream()
+    } else if (myVideoRef.current) {
+      myVideoRef.current.srcObject = null
+      console.log('비디오 스트림 제거됨')
+    }
+  }, [myVideoStream])
+
+  // remoteStreams가 변경될 때 각 참여자 비디오 요소에 스트림 설정
+  useEffect(() => {
+    remoteStreams.forEach((stream, userId) => {
+      const videoElement = participantVideoRefs.current.get(userId)
+      if (videoElement && videoElement.srcObject !== stream) {
+        console.log(`🔄 Remote stream 업데이트: ${userId}`, {
+          streamId: stream.id,
+          videoTracks: stream.getVideoTracks().length,
+          streamActive: stream.active,
+        })
+        videoElement.srcObject = stream
+        
+        // iOS에서 비디오 재생을 위한 추가 속성 설정
+        videoElement.setAttribute('playsinline', 'true')
+        videoElement.setAttribute('webkit-playsinline', 'true')
+        videoElement.setAttribute('x5-playsinline', 'true')
+        videoElement.setAttribute('x5-video-player-type', 'h5')
+        videoElement.setAttribute('x5-video-player-fullscreen', 'true')
+        
+        // 비디오 재생 시도
+        const playVideo = async () => {
+          try {
+            await videoElement.play()
+            console.log(`✅ Remote video 재생 성공: ${userId}`)
+          } catch (playError) {
+            console.warn(`⚠️ Remote video 재생 실패: ${userId}`, playError)
+            // iOS에서 재생 실패 시 한 번 더 시도
+            const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent)
+            if (isIOS) {
+              setTimeout(async () => {
+                try {
+                  await videoElement.play()
+                  console.log(`✅ Remote video 재생 재시도 성공: ${userId}`)
+                } catch (retryError) {
+                  console.warn(`⚠️ Remote video 재생 재시도 실패: ${userId}`, retryError)
+                }
+              }, 500)
+            }
+          }
+        }
+        
+        // 메타데이터 로드 후 재생
+        videoElement.onloadedmetadata = () => {
+          console.log(`✅ Remote video 메타데이터 로드: ${userId}`)
+          playVideo()
+        }
+        
+        // 이미 메타데이터가 로드되어 있으면 즉시 재생
+        if (videoElement.readyState >= 1) {
+          playVideo()
+        }
+      }
+    })
+  }, [remoteStreams])
+
+  // 참여자 목록이 업데이트될 때 비디오 요소에 스트림 설정 (조건부 렌더링 대응)
+  useEffect(() => {
+    if (myVideoStream && myVideoRef.current) {
+      // 이미 같은 스트림이 설정되어 있으면 스킵
+      if (myVideoRef.current.srcObject === myVideoStream) {
+        return
+      }
+      
+      console.log('🔄 참여자 목록 업데이트: 비디오 요소에 스트림 설정 시도', {
+        streamId: myVideoStream.id,
+        elementReady: !!myVideoRef.current,
+      })
+      
+      myVideoRef.current.srcObject = myVideoStream
+      console.log('✅ 참여자 목록 업데이트: 비디오 요소에 스트림 설정 완료')
+      
+      // 모바일에서 autoplay 문제 해결을 위해 명시적으로 play 시도
+      myVideoRef.current.play().then(() => {
+        console.log('✅ 비디오 재생 시작 성공 (참여자 목록 업데이트 후)')
+      }).catch((playError) => {
+        console.warn('⚠️ 비디오 재생 실패 (참여자 목록 업데이트 후):', playError)
+      })
+    }
+  }, [participants, myVideoStream]) // participants가 변경될 때마다 시도
 
   // useRef를 사용하여 동기적으로 관리 (비동기 상태 업데이트 문제 해결)
   const previousActiveUserIdsRef = useRef<Set<string>>(new Set())
@@ -149,10 +989,14 @@ const CrewMeetingView = ({
   // 퇴장 메시지 전송 추적 (중복 방지)
   const sentExitMessagesRef = useRef<Set<string>>(new Set())
 
-  const loadParticipants = async () => {
+  const loadParticipants = useCallback(async () => {
     try {
       const user = authService.getCurrentUser()
-      if (!user) return
+      if (!user) {
+        console.log('⚠️ loadParticipants: 사용자가 로그인하지 않았습니다')
+        return
+      }
+      console.log('📋 loadParticipants 실행 중...', { userId: user.id, crewId, myVideoEnabled })
 
       let members: CrewMember[] = []
       
@@ -166,6 +1010,7 @@ const CrewMeetingView = ({
               id: `jogging_member_${memberId}_${index}`,
               crewId: crewId,
               userId: memberId,
+              role: 'member' as const,
               videoEnabled: false,
               audioEnabled: false,
               joinedAt: joggingCrew.createdAt,
@@ -176,6 +1021,16 @@ const CrewMeetingView = ({
         }
       } else {
         members = await databaseService.getCrewMembers(crewId)
+        console.log('📋 getCrewMembers 결과:', {
+          crewId,
+          memberCount: members.length,
+          members: members.map(m => ({
+            id: m.id,
+            userId: m.userId,
+            videoEnabled: m.videoEnabled,
+            audioEnabled: m.audioEnabled,
+          })),
+        })
       }
       
       // 활성 사용자 ID 수집 (localStorage + Supabase)
@@ -217,10 +1072,24 @@ const CrewMeetingView = ({
             
             if (allMembers) {
               console.log('Supabase에서 조회한 멤버:', allMembers)
+              console.log('📊 각 멤버의 video_enabled 상태:', 
+                allMembers.map(m => ({ user_id: m.user_id, video_enabled: m.video_enabled, audio_enabled: m.audio_enabled }))
+              )
               
               // video_enabled가 true인 사용자는 모두 활성으로 간주
               for (const member of allMembers) {
-                if (member.video_enabled === true) {
+                // 현재 사용자는 myVideoEnabled 상태를 확인하여 강제로 활성화
+                const isCurrentUser = member.user_id === user.id || 
+                  (currentUserUuidRef.current && member.user_id === currentUserUuidRef.current)
+                
+                if (isCurrentUser && myVideoEnabled) {
+                  // 현재 사용자가 myVideoEnabled=true이면 강제로 활성화
+                  activeUserIds.add(member.user_id)
+                  console.log('✅ 현재 사용자 강제 활성화 (myVideoEnabled=true):', member.user_id, {
+                    supabaseVideoEnabled: member.video_enabled,
+                    myVideoEnabled,
+                  })
+                } else if (member.video_enabled === true) {
                   // UUID를 그대로 activeUserIds에 추가
                   activeUserIds.add(member.user_id)
                   console.log('✅ 활성 사용자 추가 (video_enabled=true):', member.user_id)
@@ -301,7 +1170,10 @@ const CrewMeetingView = ({
       // 현재 사용자의 UUID 확인 (비교용)
       let currentUserUuid = user.id
       const userUuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-      if (!userUuidRegex.test(user.id)) {
+      if (userUuidRegex.test(user.id)) {
+        // 이미 UUID인 경우
+        currentUserUuidRef.current = user.id
+      } else {
         // localStorage ID인 경우, email로 UUID 찾기
         try {
           const { supabase } = await import('@/services/supabaseClient')
@@ -318,6 +1190,11 @@ const CrewMeetingView = ({
                 
                 if (supabaseUser) {
                   currentUserUuid = supabaseUser.id
+                  // UUID 캐시에 저장
+                  currentUserUuidRef.current = supabaseUser.id
+                  console.log('✅ 현재 사용자 UUID 캐시 저장:', user.id, '->', supabaseUser.id)
+                  // signalingService에도 UUID 업데이트
+                  signalingService.updateCurrentUserId(user.id, supabaseUser.id)
                 }
               }
             }
@@ -483,18 +1360,34 @@ const CrewMeetingView = ({
             console.log('❌ 비활성 사용자:', member.userId, memberUser.name, '| activeUserIds:', Array.from(activeUserIds))
           }
           
+          // 현재 사용자인 경우 myVideoEnabled, myAudioEnabled 사용
+          const isCurrentUser = member.userId === user.id
           participantList.push({
             id: member.id,
             userId: member.userId,
             userName: memberUser.name,
-            videoEnabled: isActive ? member.videoEnabled : false,
-            audioEnabled: isActive ? member.audioEnabled : false,
-            status: member.userId === user.id ? myStatus : (isActive ? 'active' : 'inactive'),
-            score: member.userId === user.id ? myScore : undefined,
-            currentCount: member.userId === user.id ? myCurrentCount : undefined,
+            videoEnabled: isCurrentUser ? myVideoEnabled : (isActive ? member.videoEnabled : false),
+            audioEnabled: isCurrentUser ? myAudioEnabled : (isActive ? member.audioEnabled : false),
+            status: isCurrentUser ? myStatus : (isActive ? 'active' : 'inactive'),
+            score: isCurrentUser ? myScore : undefined,
+            currentCount: isCurrentUser ? myCurrentCount : undefined,
           })
         }
       }
+
+      // 참여자 목록을 일관된 순서로 정렬 (userId 기준)
+      participantList.sort((a, b) => {
+        // 현재 사용자를 맨 앞에 배치
+        if (a.userId === user.id) return -1
+        if (b.userId === user.id) return 1
+        
+        // 활성 사용자를 비활성 사용자보다 앞에 배치
+        if (a.status !== 'inactive' && b.status === 'inactive') return -1
+        if (a.status === 'inactive' && b.status !== 'inactive') return 1
+        
+        // 같은 상태면 userId로 정렬 (일관된 순서 유지)
+        return a.userId.localeCompare(b.userId)
+      })
 
       console.log('최종 참여자 목록:', participantList.map(p => ({ 
         name: p.userName, 
@@ -503,10 +1396,213 @@ const CrewMeetingView = ({
         isActive: p.status !== 'inactive' 
       })))
       setParticipants(participantList)
+
+      // 활성 참여자와 WebRTC 연결 시작 (참여자 섹션이 펼쳐진 경우에만)
+      const currentUser = authService.getCurrentUser()
+      const activeParticipants = participantList.filter(p => p.status !== 'inactive')
+      
+      console.log('🔍 WebRTC 연결 시작 조건 확인:', {
+        hasCurrentUser: !!currentUser,
+        currentUserId: currentUser?.id,
+        myVideoEnabled,
+        isSubscribed: signalingService.isSubscribed(crewId),
+        participantCount: participantList.length,
+        activeParticipantCount: activeParticipants.length,
+        activeParticipants: activeParticipants.map(p => ({ name: p.userName, userId: p.userId })),
+        isExpanded, // 참여자 섹션 펼침 상태
+      })
+      
+      // 참여자 섹션이 접혀있으면 WebRTC 연결 시작하지 않음 (로컬 시스템 부하 방지)
+      if (!isExpanded) {
+        console.log('ℹ️ WebRTC 연결 시작 안 함: 참여자 섹션이 접혀있습니다 (로컬 시스템 부하 방지)')
+        return
+      }
+      
+      // 조건 확인 로그를 항상 출력 (조건이 맞지 않아도)
+      if (!currentUser) {
+        console.warn('⚠️ WebRTC 연결 시작 실패: 사용자가 로그인하지 않았습니다')
+        return
+      }
+      
+      if (!myVideoEnabled) {
+        console.log('ℹ️ WebRTC 연결 시작 안 함: myVideoEnabled가 false입니다')
+        console.log('   💡 참고: WebRTC 연결을 시작하려면 카메라를 켜야 합니다.')
+        console.log('   💡 참고: 다른 참여자의 영상을 보려면 자신의 카메라도 켜야 할 수 있습니다.')
+        return
+      }
+      
+      // 채널이 구독되어 있는지 확인
+      if (!signalingService.isSubscribed(crewId)) {
+        console.warn('⚠️ 채널이 구독되지 않아 WebRTC 연결을 시작할 수 없습니다:', crewId)
+        console.warn('   채널 구독을 기다리는 중... (WebRTC 초기화가 완료되지 않았을 수 있음)')
+        return
+      }
+      
+      // 활성 참여자가 없으면 연결 시작할 필요 없음
+      if (activeParticipants.length === 0) {
+        console.log('ℹ️ WebRTC 연결 시작 안 함: 활성 참여자가 없습니다')
+        return
+      }
+      
+      // WebRTC 연결 시작
+      {
+
+        console.log(`🔗 WebRTC 연결 시작 준비: ${participantList.length}명의 참여자 중 활성 참여자 확인 중...`)
+        for (const participant of participantList) {
+          // 현재 사용자는 제외 (UUID와 localStorage ID 모두 확인)
+          const isCurrentParticipant = 
+            participant.userId === currentUser.id ||
+            participant.userId === currentUser.id.replace('user_', '') ||
+            (currentUserUuidRef.current && participant.userId === currentUserUuidRef.current)
+          
+          if (isCurrentParticipant) {
+            console.log(`현재 사용자 제외: ${participant.userName} (${participant.userId})`)
+            continue
+          }
+          
+          // 비활성 사용자는 제외 (단, 비디오가 활성화된 경우는 포함)
+          if (participant.status === 'inactive' && !participant.videoEnabled) {
+            console.log(`비활성 사용자 제외: ${participant.userName} (${participant.userId})`)
+            continue
+          }
+          
+          // 이미 연결이 있으면 제외 (단, 원격 스트림이 없는 경우 재연결 시도)
+          const existingConnection = webrtcService.getPeerConnection(participant.userId)
+          const hasRemoteStream = remoteStreams.has(participant.userId)
+          
+          // 재연결 시도 횟수 추적 (무한 루프 방지)
+          const reconnectKey = `reconnect_${participant.userId}`
+          const reconnectCount = (window as any)[reconnectKey] || 0
+          
+          if (existingConnection) {
+            const state = existingConnection.iceConnectionState
+            const signalingState = existingConnection.signalingState
+            // iceConnectionState는 'new' | 'checking' | 'connected' | 'completed' | 'failed' | 'disconnected' | 'closed'
+            if (state === 'connected' || state === 'completed' || state === 'checking') {
+              if (hasRemoteStream) {
+                const logMessage = `이미 연결 중: ${participant.userName} (${participant.userId}), 상태: ${state}, 스트림 있음`
+                if (typeof console !== 'undefined' && console.log) {
+                  console.log(logMessage)
+                }
+                // 스트림이 있으면 재연결 카운터 리셋
+                (window as any)[reconnectKey] = 0
+                continue
+              } else {
+                // 재연결 시도 횟수 제한 (최대 2회)
+                if (reconnectCount >= 2) {
+                  console.warn(`⚠️ 재연결 시도 횟수 초과: ${participant.userName} (${participant.userId}), 재연결 중단`)
+                  continue
+                }
+                
+                const warnMessage1 = `⚠️ 연결은 되어 있지만 원격 스트림이 없습니다: ${participant.userName} (${participant.userId})`
+                const warnData = {
+                  iceConnectionState: state,
+                  signalingState: signalingState,
+                  reconnectCount: reconnectCount + 1,
+                }
+                if (typeof console !== 'undefined' && console.warn) {
+                  console.warn(warnMessage1, warnData)
+                  console.warn(`   재연결을 시도합니다... (${reconnectCount + 1}/2)`)
+                }
+                
+                // 재연결 카운터 증가
+                (window as any)[reconnectKey] = reconnectCount + 1
+                
+                // 기존 연결 종료 후 재연결
+                try {
+                  await webrtcService.closeConnection(participant.userId)
+                  // 잠시 대기 후 재연결
+                  await new Promise(resolve => setTimeout(resolve, 1000))
+                } catch (error) {
+                  console.error(`재연결 중 에러: ${participant.userName}`, error)
+                  continue
+                }
+              }
+            }
+          } else {
+            // 연결이 없으면 재연결 카운터 리셋
+            (window as any)[reconnectKey] = 0
+          }
+
+          // WebRTC 연결 시작
+          // 동시 실행 방지: 이미 연결 시도 중인지 확인
+          const connectingKey = `connecting_${participant.userId}`
+          if ((window as any)[connectingKey]) {
+            console.warn(`⚠️ 이미 연결 시도 중입니다: ${participant.userName} (${participant.userId})`)
+            continue
+          }
+          
+          (window as any)[connectingKey] = true
+          
+          try {
+            console.log(`🚀 WebRTC 연결 시작: ${participant.userName} (${participant.userId})`)
+            const offer = await webrtcService.createOffer(participant.userId)
+            console.log(`✅ Offer 생성 완료: ${participant.userName}`, {
+              offerType: offer.type,
+              hasSdp: !!offer.sdp,
+              sdpLength: offer.sdp?.length || 0,
+            })
+            await signalingService.sendOffer(crewId, participant.userId, offer)
+            // getCurrentUserId가 없을 수 있으므로 안전하게 처리
+            let currentUserId = 'unknown'
+            try {
+              if (typeof (signalingService as any).getCurrentUserId === 'function') {
+                currentUserId = (signalingService as any).getCurrentUserId()
+              }
+            } catch (error) {
+              console.warn('getCurrentUserId 호출 실패:', error)
+            }
+            
+            console.log(`✅ Offer 전송 완료: ${participant.userName}`, {
+              from: currentUserId,
+              to: participant.userId,
+            })
+
+            // ICE candidate 수집 및 전송
+            const peerConnection = webrtcService.getPeerConnection(participant.userId)
+            if (peerConnection) {
+              peerConnection.onicecandidate = async (event) => {
+                if (event.candidate) {
+                  await signalingService.sendIceCandidate(
+                    crewId,
+                    participant.userId,
+                    event.candidate
+                  )
+                }
+              }
+            }
+          } catch (error) {
+            console.error(`WebRTC 연결 실패 (${participant.userName}):`, error)
+          } finally {
+            // 연결 시도 완료 (성공 또는 실패)
+            (window as any)[connectingKey] = false
+          }
+        }
+      }
     } catch (error) {
       console.error('참여자 로드 실패:', error)
     }
-  }
+  }, [crewId, myVideoEnabled, crewType, isExpanded]) // isExpanded가 변경될 때마다 새로운 함수 생성
+
+  // loadParticipants 주기적 호출 (loadParticipants 정의 후에 배치)
+  useEffect(() => {
+    if (!crewId) return
+    
+    console.log('📋 loadParticipants 호출 시작', { crewId, myVideoEnabled, isExpanded })
+    
+    // 초기 로드
+    loadParticipants()
+    
+    // 주기적 갱신 (참여자 섹션이 펼쳐진 경우에만)
+    const interval = setInterval(() => {
+      if (isExpanded) {
+        console.log('📋 loadParticipants 주기적 호출', { crewId, myVideoEnabled, isExpanded })
+        loadParticipants()
+      }
+    }, 2000) // 2초마다 갱신
+    
+    return () => clearInterval(interval)
+  }, [crewId, loadParticipants, isExpanded]) // isExpanded가 변경되면 재실행
 
   const getStatusText = (status: string, score?: number) => {
     if (status === 'inactive') {
@@ -528,7 +1624,7 @@ const CrewMeetingView = ({
     return 'bg-blue-500'
   }
 
-  const handleToggle = () => {
+  const handleToggle = async () => {
     // 클릭 시 접기/펼치기 토글
     const newIsExpanded = !isExpanded
     setIsExpanded(newIsExpanded)
@@ -536,6 +1632,32 @@ const CrewMeetingView = ({
     setHeight(newHeight)
     if (onHeightChange) {
       onHeightChange(newHeight)
+    }
+    
+    // 참여자 섹션을 닫으면 모든 WebRTC 연결 종료 (로컬 시스템 부하 방지)
+    if (!newIsExpanded) {
+      console.log('🛑 참여자 섹션 닫힘: 모든 WebRTC 연결 종료 및 스트림 정리')
+      try {
+        // 모든 WebRTC 연결 종료
+        await webrtcService.closeAllConnections()
+        // 원격 스트림 정리
+        setRemoteStreams(new Map())
+        // 연결 상태 정리
+        setConnectionStates(new Map())
+        // 비디오 요소의 srcObject 정리
+        participantVideoRefs.current.forEach((videoElement) => {
+          if (videoElement) {
+            videoElement.srcObject = null
+          }
+        })
+        console.log('✅ 모든 WebRTC 연결 및 스트림 정리 완료')
+      } catch (error) {
+        console.error('❌ WebRTC 연결 종료 중 오류:', error)
+      }
+    } else {
+      // 참여자 섹션을 펼치면 WebRTC 연결 시작
+      console.log('📹 참여자 섹션 펼침: WebRTC 연결 시작')
+      // loadParticipants가 useEffect에서 자동으로 호출되어 연결이 시작됨
     }
   }
 
@@ -597,7 +1719,7 @@ const CrewMeetingView = ({
           <h3 className="text-white font-semibold">
             참여자 ({activeCount}/{participants.length}명)
           </h3>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <button
             onClick={() => onVideoToggle(!myVideoEnabled)}
             className={`px-3 py-2 rounded-lg font-semibold text-sm transition ${
@@ -618,6 +1740,172 @@ const CrewMeetingView = ({
           >
             🎤 {myAudioEnabled ? 'ON' : 'OFF'}
           </button>
+          
+          {/* 화질 선택 버튼 */}
+          {myVideoEnabled && (
+            <div className="relative" ref={qualityMenuRef}>
+              <button
+                onClick={() => setShowQualityMenu(!showQualityMenu)}
+                className="px-3 py-2 rounded-lg font-semibold text-sm transition bg-purple-500 text-white hover:bg-purple-600 flex items-center gap-1"
+                title="화질 선택"
+              >
+                <span>⚙️</span>
+                <span className="hidden sm:inline">
+                  {videoQuality === 'auto' 
+                    ? (participants.length >= 5 ? '자동(저화질)' : '자동(중간)')
+                    : qualityPresets[videoQuality as keyof typeof qualityPresets]?.label.split(' ')[0] || '화질'
+                  }
+                </span>
+                <svg 
+                  className={`w-4 h-4 transition-transform ${showQualityMenu ? 'rotate-180' : ''}`}
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              
+              {/* 화질 선택 메뉴 */}
+              {showQualityMenu && (
+                <div className="absolute right-0 mt-2 bg-gray-800 rounded-lg shadow-xl z-50 min-w-[200px] border border-gray-700">
+                  <div className="p-2">
+                    <div className="text-xs text-gray-400 px-3 py-2 mb-1">화질 선택</div>
+                    {(['auto', 'high', 'medium', 'low'] as const).map((quality) => {
+                      const preset = quality === 'auto' 
+                        ? null 
+                        : qualityPresets[quality as keyof typeof qualityPresets]
+                      const isSelected = videoQuality === quality
+                      
+                      return (
+                        <button
+                          key={quality}
+                          onClick={() => {
+                            console.log('🎬 화질 변경 요청:', {
+                              from: videoQuality,
+                              to: quality,
+                              hasSharedStream: !!sharedVideoStream,
+                              hasMyVideoStream: !!myVideoStream,
+                            })
+                            
+                            setVideoQuality(quality)
+                            setShowQualityMenu(false)
+                            
+                            // 공유 스트림을 사용하는 경우 화질 변경 제한
+                            if (sharedVideoStream && myVideoStream) {
+                              const currentVideoTrack = myVideoStream.getVideoTracks()[0]
+                              const sharedVideoTrack = sharedVideoStream.getVideoTracks()[0]
+                              
+                              // 공유 스트림의 트랙을 사용 중이면 해상도 변경 불가, 비트레이트만 조정
+                              if (currentVideoTrack === sharedVideoTrack) {
+                                console.log('⚠️ 공유 스트림 사용 중: 해상도 변경 불가, 비트레이트만 조정')
+                                
+                                // 비트레이트만 조정 (해상도는 변경하지 않음)
+                                const activeVideoCount = participants.filter(p => p.status !== 'inactive' && p.videoEnabled).length + (myVideoEnabled ? 1 : 0)
+                                const qualityPreset = getVideoQuality(activeVideoCount, quality)
+                                
+                                console.log('📊 비트레이트 조정:', {
+                                  quality,
+                                  bitrate: `${qualityPreset.bitrate / 1000}Kbps`,
+                                  participantCount: participants.length,
+                                })
+                                
+                                // WebRTC 연결의 비트레이트만 조정
+                                participants.forEach(participant => {
+                                  const peerConnection = webrtcService.getPeerConnection(participant.userId)
+                                  if (peerConnection) {
+                                    webrtcService.applyBitrateLimit(peerConnection, qualityPreset.bitrate).catch(err => {
+                                      console.warn(`비트레이트 조정 실패 (${participant.userName}):`, err)
+                                    })
+                                  }
+                                })
+                                
+                                // 로컬 스트림의 비트레이트도 조정
+                                const localPeerConnections = webrtcService.getAllPeerConnections()
+                                localPeerConnections.forEach((peerConnection, userId) => {
+                                  webrtcService.applyBitrateLimit(peerConnection, qualityPreset.bitrate).catch(err => {
+                                    console.warn(`로컬 비트레이트 조정 실패 (${userId}):`, err)
+                                  })
+                                })
+                                
+                                return // 공유 스트림을 사용 중이면 스트림 재획득하지 않음
+                              }
+                            }
+                            
+                            // 공유 스트림을 사용하지 않는 경우 스트림 재획득
+                            // 화질 변경 시 강제로 스트림 재획득 (해상도 차이 체크 무시)
+                            console.log('🔄 화질 변경: 스트림 재획득 시작', {
+                              hasMyVideoStream: !!myVideoStream,
+                              hasSharedStream: !!sharedVideoStream,
+                            })
+                            
+                            if (myVideoStream) {
+                              const currentVideoTrack = myVideoStream.getVideoTracks()[0]
+                              const sharedVideoTrack = sharedVideoStream?.getVideoTracks()[0]
+                              
+                              // 공유 스트림의 트랙이 아니면 정리
+                              if (!sharedVideoStream || currentVideoTrack !== sharedVideoTrack) {
+                                console.log('🛑 화질 변경: 기존 스트림 정리 및 재획득 플래그 설정')
+                                // 공유 스트림의 트랙이 아닌 경우만 stop
+                                myVideoStream.getTracks().forEach(track => {
+                                  if (track !== sharedVideoTrack) {
+                                    track.stop()
+                                  }
+                                })
+                                setMyVideoStream(null)
+                                // 스트림 재획득을 위해 hasInitializedRef 리셋 및 강제 재획득 플래그 설정
+                                hasInitializedRef.current = false
+                                forceReacquireRef.current = true
+                                console.log('✅ 화질 변경: 재획득 플래그 설정 완료, useEffect가 스트림 재획득을 시작합니다')
+                              } else {
+                                console.log('⚠️ 공유 스트림 사용 중: 스트림 재획득 불가')
+                              }
+                            } else {
+                              // 스트림이 없으면 재획득 허용
+                              console.log('🔄 화질 변경: 스트림이 없으므로 재획득 허용')
+                              hasInitializedRef.current = false
+                              forceReacquireRef.current = true
+                            }
+                          }}
+                          className={`w-full text-left px-3 py-2 rounded text-sm transition ${
+                            isSelected
+                              ? 'bg-purple-600 text-white'
+                              : 'text-gray-300 hover:bg-gray-700'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="font-medium">
+                                {quality === 'auto' 
+                                  ? '자동' 
+                                  : preset?.label
+                                }
+                              </div>
+                              {preset && (
+                                <div className="text-xs text-gray-400 mt-0.5">
+                                  {preset.description}
+                                </div>
+                              )}
+                              {quality === 'auto' && (
+                                <div className="text-xs text-gray-400 mt-0.5">
+                                  {participants.length >= 5 ? '5명 이상: 저화질' : '기본: 중간 화질'}
+                                </div>
+                              )}
+                            </div>
+                            {isSelected && (
+                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -641,7 +1929,7 @@ const CrewMeetingView = ({
               >
         {participants.map((participant) => (
           <motion.div
-            key={participant.id}
+            key={participant.userId}
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
                     className="bg-gray-800 rounded-lg relative overflow-hidden aspect-video"
@@ -660,33 +1948,190 @@ const CrewMeetingView = ({
                       </div>
                     ) : participant.videoEnabled ? (
                       <div className="w-full h-full bg-gray-700 relative overflow-hidden">
-                        {participant.userId === authService.getCurrentUser()?.id ? (
-                          // 내 영상
-                  <video
-                    ref={myVideoRef}
-                    autoPlay
-                    muted
-                    playsInline
-                            className="w-full h-full object-cover"
-                  />
-                ) : (
-                          // 다른 참여자 영상 (현재는 플레이스홀더, 실제로는 WebRTC로 스트림 받아야 함)
-                          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500/20 to-blue-500/20">
-                            <div className="text-center">
-                              <div className="text-3xl mb-2">📹</div>
-                              <div className="text-gray-300 text-sm font-semibold flex items-center gap-1 justify-center">
-                                {participant.userName}
-                                <RankBadge rank={userRanks[participant.userId] || 1} type="user" size="sm" showText={false} />
-                              </div>
-                              <div className="text-gray-400 text-xs mt-1">영상 공유 중</div>
-                            </div>
-                          </div>
-                        )}
+                        {(() => {
+                          const currentUser = authService.getCurrentUser()
+                          // UUID와 localStorage ID 모두 비교
+                          let isCurrentUser = false
+                          if (currentUser) {
+                            // 직접 비교
+                            if (participant.userId === currentUser.id) {
+                              isCurrentUser = true
+                            }
+                            // localStorage ID 제거 후 비교
+                            else if (participant.userId === currentUser.id.replace('user_', '')) {
+                              isCurrentUser = true
+                            }
+                            // 캐시된 UUID와 비교
+                            else if (currentUserUuidRef.current && participant.userId === currentUserUuidRef.current) {
+                              isCurrentUser = true
+                            }
+                          }
+                          
+                          console.log(`비디오 렌더링 체크: ${participant.userName}`, {
+                            participantUserId: participant.userId,
+                            currentUserId: currentUser?.id,
+                            currentUserUuid: currentUserUuidRef.current,
+                            isCurrentUser,
+                            myVideoEnabled,
+                            participantVideoEnabled: participant.videoEnabled,
+                            hasMyVideoStream: !!myVideoStream,
+                          })
+                          
+                          console.log(`비디오 렌더링 체크: ${participant.userName}`, {
+                            participantUserId: participant.userId,
+                            currentUserId: currentUser?.id,
+                            currentUserUuid: currentUserUuidRef.current,
+                            isCurrentUser,
+                            myVideoEnabled,
+                            participantVideoEnabled: participant.videoEnabled,
+                            hasMyVideoStream: !!myVideoStream,
+                          })
+                          
+                          if (isCurrentUser) {
+                            // 내 영상
+                            if (!myVideoStream) {
+                              console.warn(`⚠️ 내 영상 스트림이 없습니다: ${participant.userName}`)
+                              return (
+                                <div className="w-full h-full flex items-center justify-center bg-gray-700">
+                                  <div className="text-center">
+                                    <div className="text-3xl mb-2">📹</div>
+                                    <div className="text-gray-300 text-sm">영상 로딩 중...</div>
+                                  </div>
+                                </div>
+                              )
+                            }
+                            return (
+                              <video
+                                ref={myVideoRef}
+                                autoPlay
+                                muted
+                                playsInline
+                                webkit-playsinline="true"
+                                x5-playsinline="true"
+                                x5-video-player-type="h5"
+                                x5-video-player-fullscreen="true"
+                                className="w-full h-full object-cover"
+                                onLoadedMetadata={() => {
+                                  console.log(`✅ 내 영상 메타데이터 로드 완료: ${participant.userName}`)
+                                }}
+                                onError={(error) => {
+                                  console.error(`❌ 내 영상 오류: ${participant.userName}`, error)
+                                }}
+                              />
+                            )
+                          } else {
+                            // 다른 참여자 영상 (WebRTC로 스트림 받기)
+                            const remoteStream = remoteStreams.get(participant.userId)
+                            const connectionState = connectionStates.get(participant.userId)
+                            
+                            console.log(`참여자 ${participant.userName} (${participant.userId}):`, {
+                              hasRemoteStream: !!remoteStream,
+                              connectionState,
+                              videoEnabled: participant.videoEnabled,
+                              streamActive: remoteStream?.active,
+                              videoTracks: remoteStream?.getVideoTracks().length || 0,
+                            })
+                            
+                            // remoteStream이 있거나 연결 중이면 비디오 표시 시도
+                            if (remoteStream && remoteStream.active && remoteStream.getVideoTracks().length > 0) {
+                              // Remote stream이 있으면 비디오 표시
+                              return (
+                                <video
+                                  ref={(el) => {
+                                    if (el) {
+                                      participantVideoRefs.current.set(participant.userId, el)
+                                      // 스트림은 useEffect에서 설정 (remoteStreams 변경 시)
+                                      if (el.srcObject !== remoteStream) {
+                                        el.srcObject = remoteStream
+                                        console.log(`✅ Remote video 설정: ${participant.userName}`, {
+                                          streamId: remoteStream.id,
+                                          videoTracks: remoteStream.getVideoTracks().length,
+                                          streamActive: remoteStream.active,
+                                        })
+                                      }
+                                      el.onloadedmetadata = () => {
+                                        console.log(`✅ Remote video 메타데이터 로드: ${participant.userName}`)
+                                      }
+                                      el.onerror = (error) => {
+                                        console.error(`❌ Remote video 오류 (${participant.userName}):`, error)
+                                      }
+                                    }
+                                  }}
+                                  autoPlay
+                                  playsInline
+                                  webkit-playsinline="true"
+                                  x5-playsinline="true"
+                                  x5-video-player-type="h5"
+                                  x5-video-player-fullscreen="true"
+                                  className="w-full h-full object-cover"
+                                />
+                              )
+                            } else if (connectionState === 'connecting' || connectionState === 'checking') {
+                              // 연결 중
+                              return (
+                                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500/20 to-blue-500/20">
+                                  <div className="text-center">
+                                    <div className="text-3xl mb-2 animate-pulse">📹</div>
+                                    <div className="text-gray-300 text-sm font-semibold flex items-center gap-1 justify-center">
+                                      {participant.userName}
+                                      <RankBadge rank={userRanks[participant.userId] || 1} type="user" size="sm" showText={false} />
+                                    </div>
+                                    <div className="text-gray-400 text-xs mt-1">연결 중...</div>
+                                  </div>
+                                </div>
+                              )
+                            } else {
+                              // 연결 대기 또는 실패
+                              return (
+                                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500/20 to-blue-500/20">
+                                  <div className="text-center">
+                                    <div className="text-3xl mb-2">📹</div>
+                                    <div className="text-gray-300 text-sm font-semibold flex items-center gap-1 justify-center">
+                                      {participant.userName}
+                                      <RankBadge rank={userRanks[participant.userId] || 1} type="user" size="sm" showText={false} />
+                                    </div>
+                                    <div className="text-gray-400 text-xs mt-1">영상 공유 중</div>
+                                  </div>
+                                </div>
+                              )
+                            }
+                          }
+                        })()}
                         {/* 사용자 이름 오버레이 */}
                         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
                           <div className="text-white text-sm font-semibold truncate flex items-center gap-1">
                             {participant.userName}
                             <RankBadge rank={userRanks[participant.userId] || 1} type="user" size="sm" showText={false} />
+                            {/* 화질 정보 표시 (사용자 이름 옆) */}
+                            {participant.videoEnabled && (() => {
+                              const currentUser = authService.getCurrentUser()
+                              const isCurrentUser = currentUser && (
+                                participant.userId === currentUser.id ||
+                                participant.userId === currentUser.id.replace('user_', '') ||
+                                (currentUserUuidRef.current && participant.userId === currentUserUuidRef.current)
+                              )
+                              
+                              const hasStream = isCurrentUser ? !!myVideoStream : !!remoteStreams.get(participant.userId)
+                              if (hasStream) {
+                                const quality = getParticipantQuality(participant, isCurrentUser || false)
+                                const qualityLabels = {
+                                  high: '고화질',
+                                  medium: '중화질',
+                                  low: '저화질',
+                                }
+                                const qualityColors = {
+                                  high: 'bg-green-500/80',
+                                  medium: 'bg-yellow-500/80',
+                                  low: 'bg-red-500/80',
+                                }
+                                return (
+                                  <span className={`${qualityColors[quality]} text-white text-xs px-1.5 py-0.5 rounded font-semibold ml-1`}>
+                                    {qualityLabels[quality]}
+                                  </span>
+                                )
+                              }
+                              return null
+                            })()}
                           </div>
                         </div>
               </div>

@@ -55,6 +55,11 @@ const NavigationButtons = ({
               ? 'bg-red-500/80 hover:bg-red-600/80' 
               : 'bg-gray-700/80 hover:bg-gray-600/80'
           }`}
+          style={{
+            pointerEvents: 'auto', // 모바일에서 터치 이벤트 보장
+            touchAction: 'manipulation', // 모바일 터치 최적화
+            zIndex: 1000, // 최상위 레이어 보장
+          }}
           title={exitTitle}
         >
         {exitMode ? (

@@ -19,14 +19,18 @@ const JoggingPage = () => {
     crewId?: string
   }) || {}
   
+  // 목록에서 설정한 미디어 공유 설정 가져오기
+  const initialVideoEnabled = config?.togetherConfig?.videoShare ?? false
+  const initialAudioEnabled = config?.togetherConfig?.audioShare ?? false
+  
   const [isTracking, setIsTracking] = useState(false)
   const [joggingData, setJoggingData] = useState<JoggingData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
   const [meetingViewHeight, setMeetingViewHeight] = useState(120)
   const [entryMessage, setEntryMessage] = useState<string | null>(null)
-  const [myVideoEnabled, setMyVideoEnabled] = useState(false)
-  const [myAudioEnabled, setMyAudioEnabled] = useState(false)
+  const [myVideoEnabled, setMyVideoEnabled] = useState(initialVideoEnabled)
+  const [myAudioEnabled, setMyAudioEnabled] = useState(initialAudioEnabled)
   const [hasNewMessage, setHasNewMessage] = useState(false) // 새 메시지 알림 상태
   const [hasEntryNotification, setHasEntryNotification] = useState(false) // 입장 알림 상태
   const [unreadMessageCount, setUnreadMessageCount] = useState(0) // 미확인 메시지 수
@@ -194,6 +198,58 @@ const JoggingPage = () => {
       }
     }
   }, [config?.mode, crewId, myAudioEnabled])
+
+  // 입장 시 초기 미디어 설정을 즉시 데이터베이스에 반영
+  useEffect(() => {
+    if (config?.mode === 'together' && crewId) {
+      const user = authService.getCurrentUser()
+      if (!user) return
+
+      // 초기값이 설정되어 있으면 즉시 데이터베이스 업데이트
+      const updateInitialSettings = async () => {
+        try {
+          await databaseService.updateCrewMember(crewId, user.id, {
+            videoEnabled: initialVideoEnabled ?? false,
+            audioEnabled: initialAudioEnabled ?? false,
+          })
+          console.log('✅ 조깅 모드: 입장 시 초기 미디어 설정 반영 완료', {
+            videoEnabled: initialVideoEnabled ?? false,
+            audioEnabled: initialAudioEnabled ?? false,
+          })
+        } catch (error) {
+          console.error('❌ 조깅 모드: 입장 시 초기 미디어 설정 반영 실패:', error)
+        }
+      }
+      updateInitialSettings()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // 마운트 시 한 번만 실행
+
+  // 조깅 함께 모드: 영상/음성 토글 업데이트 (크루 모드와 동일하게)
+  useEffect(() => {
+    if (config?.mode === 'together' && crewId) {
+      const updateMemberSettings = async () => {
+        const user = authService.getCurrentUser()
+        if (!user) return
+
+        try {
+          await databaseService.updateCrewMember(crewId, user.id, {
+            videoEnabled: myVideoEnabled,
+            audioEnabled: myAudioEnabled,
+          })
+          console.log('✅ 조깅 모드: 멤버 설정 업데이트 완료', {
+            crewId,
+            userId: user.id,
+            videoEnabled: myVideoEnabled,
+            audioEnabled: myAudioEnabled,
+          })
+        } catch (error) {
+          console.error('❌ 조깅 모드: 멤버 설정 업데이트 실패:', error)
+        }
+      }
+      updateMemberSettings()
+    }
+  }, [config?.mode, crewId, myVideoEnabled, myAudioEnabled])
 
   // 조깅 크루 정보 및 추천 상태 로드
   useEffect(() => {

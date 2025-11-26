@@ -237,6 +237,8 @@ const CrewListPage = () => {
         config: crew.exerciseConfig,
         alarm: crew.alarm,
         crewId: crew.id,
+        videoEnabled: videoEnabled,
+        audioEnabled: audioEnabled,
       },
     })
   }

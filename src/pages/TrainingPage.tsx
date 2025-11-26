@@ -46,12 +46,14 @@ const convertToKorean = (num: number): string => {
 const TrainingPage = () => {
   const location = useLocation()
   const navigate = useNavigate()
-  const { mode, config, alarm, backgroundMusic, crewId } = (location.state as {
+  const { mode, config, alarm, backgroundMusic, crewId, videoEnabled: initialVideoEnabled, audioEnabled: initialAudioEnabled } = (location.state as {
     mode: AppMode
     config: ExerciseConfig
     alarm?: AlarmConfig
     backgroundMusic?: number
     crewId?: string
+    videoEnabled?: boolean
+    audioEnabled?: boolean
   }) || { mode: 'single', config: { type: 'squat', sets: 2, reps: 6 } }
   
   const [alarmNotification, setAlarmNotification] = useState<{ message: string; type: 'info' | 'warning' | 'start' } | null>(null)
@@ -85,9 +87,35 @@ const TrainingPage = () => {
     }
   }, [navigate])
   
-  // 크루 모드 관련 상태
-  const [myVideoEnabled, setMyVideoEnabled] = useState(false)
-  const [myAudioEnabled, setMyAudioEnabled] = useState(false)
+  // 크루 모드 관련 상태 (목록에서 설정한 값으로 초기화)
+  const [myVideoEnabled, setMyVideoEnabled] = useState(initialVideoEnabled ?? false)
+  const [myAudioEnabled, setMyAudioEnabled] = useState(initialAudioEnabled ?? false)
+  
+  // 입장 시 초기 미디어 설정을 즉시 데이터베이스에 반영
+  useEffect(() => {
+    if (mode === 'crew' && crewId) {
+      const user = authService.getCurrentUser()
+      if (!user) return
+
+      // 초기값이 설정되어 있으면 즉시 데이터베이스 업데이트
+      const updateInitialSettings = async () => {
+        try {
+          await databaseService.updateCrewMember(crewId, user.id, {
+            videoEnabled: initialVideoEnabled ?? false,
+            audioEnabled: initialAudioEnabled ?? false,
+          })
+          console.log('✅ 입장 시 초기 미디어 설정 반영 완료', {
+            videoEnabled: initialVideoEnabled ?? false,
+            audioEnabled: initialAudioEnabled ?? false,
+          })
+        } catch (error) {
+          console.error('❌ 입장 시 초기 미디어 설정 반영 실패:', error)
+        }
+      }
+      updateInitialSettings()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // 마운트 시 한 번만 실행
   const [chatOpen, setChatOpen] = useState(false)
   const [meetingViewHeight, setMeetingViewHeight] = useState(120) // 바텀시트 높이
   const [isCompleted, setIsCompleted] = useState(false)
@@ -96,6 +124,8 @@ const TrainingPage = () => {
   const [hasEntryNotification, setHasEntryNotification] = useState(false) // 입장 알림 상태
   const [unreadMessageCount, setUnreadMessageCount] = useState(0) // 미확인 메시지 수
   const [hasRecommended, setHasRecommended] = useState(false) // 추천 상태
+  const [showExitConfirm, setShowExitConfirm] = useState(false) // 나가기 확인 모달
+  const [isExiting, setIsExiting] = useState(false) // 나가기 처리 중 상태 (중복 클릭 방지)
   const [recommendations, setRecommendations] = useState(0) // 추천수
   const [hasCancelled, setHasCancelled] = useState(false) // 추천 취소 상태
   const [recommendToast, setRecommendToast] = useState<{ message: string; type: 'success' | 'cancel' } | null>(null) // 추천 토스트 메시지
@@ -436,19 +466,48 @@ const TrainingPage = () => {
     }
 
     let lastSpokenCount = -1 // 마지막으로 말한 카운트 (중복 방지)
+    let countdownStartTime = Date.now() // 카운트다운 시작 시간
+    let initialCountdown = startCountdown // 초기 카운트다운 값 저장
 
     console.log('⏱️ 카운트다운 시작:', startCountdown)
+
+    // iOS에서 백그라운드 전환 시 타이머가 느려지는 문제 해결
+    // Page Visibility API를 사용하여 페이지가 활성화되어 있을 때만 카운트다운 진행
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.log('⚠️ 페이지가 백그라운드로 전환됨')
+      } else {
+        console.log('✅ 페이지가 포그라운드로 전환됨, 시간 동기화')
+        // 포그라운드로 돌아올 때 시간 동기화
+        countdownStartTime = Date.now() - (initialCountdown - (startCountdown || initialCountdown)) * 1000
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
 
     const interval = setInterval(() => {
       // isStarted가 true가 되거나 이미 시작했으면 즉시 정지
       if (isStarted || hasStartedRef.current) {
         clearInterval(interval)
+        document.removeEventListener('visibilitychange', handleVisibilityChange)
         return
       }
 
+      // iOS에서 정확한 시간 측정을 위해 실제 경과 시간 사용
+      const elapsed = Math.floor((Date.now() - countdownStartTime) / 1000)
+      const currentCount = Math.max(0, initialCountdown - elapsed)
+
+      // 실제 경과 시간 기반으로 카운트다운 업데이트
       setStartCountdown((prev) => {
-        // prev가 null이거나 1 이하이면 카운트다운 종료
-        if (prev === null || prev <= 1) {
+        // 이미 업데이트된 값이면 스킵
+        if (prev === currentCount) {
+          return prev
+        }
+        
+        const newCount = currentCount
+        
+        // newCount가 0 이하이면 카운트다운 종료
+        if (newCount <= 0) {
           // 중복 시작 방지
           if (hasStartedRef.current) {
             console.log('⚠️ 이미 시작됨, 중복 시작 방지')
@@ -505,19 +564,20 @@ const TrainingPage = () => {
           return null
         }
         
-        const newCount = prev - 1
         // 5초 이하일 때만 음성 안내 (중복 방지)
         if (newCount <= 5 && newCount > 0 && newCount !== lastSpokenCount) {
           const koreanNumber = convertToKorean(newCount)
           audioService.speak(koreanNumber)
           lastSpokenCount = newCount // 마지막으로 말한 카운트 저장
         }
+        
         return newCount
       })
-    }, 1000)
+    }, 100) // 100ms마다 체크하여 더 정확한 시간 측정
 
     return () => {
       clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       lastSpokenCount = -1
     }
   }, [startCountdown, isStarted, mode, config])
@@ -1237,7 +1297,12 @@ const TrainingPage = () => {
         )}
 
         <EffectOverlay effects={effects} />
-        <DebugInfo poses={poses} isEnabled={isStarted && (config.type === EXERCISE_TYPES.SQUAT || config.type === EXERCISE_TYPES.PUSHUP)} />
+        <DebugInfo 
+          poses={poses} 
+          isEnabled={isStarted && (config.type === EXERCISE_TYPES.SQUAT || config.type === EXERCISE_TYPES.PUSHUP)}
+          isCrewMode={mode === 'crew'}
+          meetingViewHeight={mode === 'crew' ? meetingViewHeight : 0}
+        />
         
         {/* 알람 알림 모달 */}
         {alarmNotification && (
@@ -1476,11 +1541,13 @@ const TrainingPage = () => {
       )}
 
       <div 
-        className={`${mode === 'crew' ? 'fixed' : 'absolute'} left-2 right-2 md:left-4 md:right-4 flex gap-2 md:gap-4 items-center z-50 md:relative md:bottom-auto md:left-auto md:right-auto md:p-4 mobile-bottom-safe flex-wrap`}
+        className={`${mode === 'crew' ? 'fixed' : 'absolute'} left-2 right-2 md:left-4 md:right-4 flex gap-2 md:gap-4 items-center z-[100] md:relative md:bottom-auto md:left-auto md:right-auto md:p-4 mobile-bottom-safe flex-wrap`}
         style={mode === 'crew' ? { 
-          bottom: `calc(${meetingViewHeight + 16}px + env(safe-area-inset-bottom, 0px))` // 바텀시트 높이 + 여백 + safe area
+          bottom: `calc(${meetingViewHeight + 16}px + env(safe-area-inset-bottom, 0px))`, // 바텀시트 높이 + 여백 + safe area
+          pointerEvents: 'auto', // 모바일에서 터치 이벤트 보장
         } : {
-          bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))'
+          bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',
+          pointerEvents: 'auto', // 모바일에서 터치 이벤트 보장
         }}
       >
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -1488,35 +1555,8 @@ const TrainingPage = () => {
             exitMode={true}
             exitTitle="나가기"
             onBack={() => {
-              if (window.confirm('운동을 종료하고 나가시겠습니까?')) {
-                // 나가기 시 모든 오디오 즉시 정지 (동기적으로)
-                audioService.stopAll()
-                // 추가 안전장치: 강제로 모든 Howl 인스턴스 정지
-                if (typeof window !== 'undefined' && (window as any).Howl) {
-                  // Howl의 모든 재생 중인 사운드 강제 정지
-                  try {
-                    const howlInstances = (window as any).Howl._howls || []
-                    howlInstances.forEach((howl: any) => {
-                      if (howl && typeof howl.stop === 'function') {
-                        howl.stop()
-                        if (typeof howl.unload === 'function') {
-                          howl.unload()
-                        }
-                      }
-                    })
-                  } catch (e) {
-                    console.warn('Howl 인스턴스 정지 중 오류:', e)
-                  }
-                }
-                // 모드에 따라 이전 화면으로 이동
-                if (mode === 'single') {
-                  navigate('/single')
-                } else if (mode === 'crew') {
-                  navigate('/crew/my-crews')
-                } else {
-                  navigate('/mode-select')
-                }
-              }
+              // 삼성 갤럭시에서 window.confirm이 제대로 작동하지 않을 수 있으므로 커스텀 모달 사용
+              setShowExitConfirm(true)
             }}
           />
           {/* 운동 중 강제 종료 버튼 (항상 표시) */}
@@ -1560,6 +1600,7 @@ const TrainingPage = () => {
             myCurrentCount={totalCount}
             onHeightChange={setMeetingViewHeight}
             onEntryMessage={setEntryMessage}
+            sharedVideoStream={cameraState.stream} // 카메라 스트림 공유 (성능 최적화)
           />
         </div>
       )}
@@ -1609,6 +1650,104 @@ const TrainingPage = () => {
             <span className="font-semibold">{recommendToast.message}</span>
           </div>
         </motion.div>
+      )}
+      
+      {/* 나가기 확인 모달 */}
+      {showExitConfirm && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[200]">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            className="bg-gray-800 rounded-lg p-6 max-w-sm w-full mx-4"
+          >
+            <h3 className="text-xl font-bold text-white mb-4">나가기 확인</h3>
+            <p className="text-gray-300 mb-6">운동을 종료하고 나가시겠습니까?</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  // 중복 클릭 방지
+                  if (isExiting) {
+                    return
+                  }
+                  
+                  setIsExiting(true)
+                  
+                  // 모달을 먼저 닫아서 UI 반응성 향상
+                  setShowExitConfirm(false)
+                  
+                  // 비동기로 오디오 정지 및 네비게이션 처리 (UI 블로킹 방지)
+                  setTimeout(() => {
+                    try {
+                      // 나가기 시 모든 오디오 즉시 정지
+                      audioService.stopAll()
+                      
+                      // 추가 안전장치: 강제로 모든 Howl 인스턴스 정지
+                      if (typeof window !== 'undefined' && (window as any).Howl) {
+                        try {
+                          const howlInstances = (window as any).Howl._howls || []
+                          howlInstances.forEach((howl: any) => {
+                            if (howl && typeof howl.stop === 'function') {
+                              howl.stop()
+                              if (typeof howl.unload === 'function') {
+                                howl.unload()
+                              }
+                            }
+                          })
+                        } catch (e) {
+                          console.warn('Howl 인스턴스 정지 중 오류:', e)
+                        }
+                      }
+                    } catch (e) {
+                      console.warn('오디오 정지 중 오류:', e)
+                    }
+                    
+                    // 모드에 따라 이전 화면으로 이동
+                    if (mode === 'single') {
+                      navigate('/single')
+                    } else if (mode === 'crew') {
+                      navigate('/crew/my-crews')
+                    } else {
+                      navigate('/mode-select')
+                    }
+                    
+                    // 상태 리셋 (다음에 다시 사용할 수 있도록)
+                    setTimeout(() => {
+                      setIsExiting(false)
+                    }, 1000)
+                  }, 50) // 짧은 지연으로 UI 반응성 향상
+                }}
+                disabled={isExiting}
+                className={`flex-1 px-4 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600 font-semibold transition-all ${
+                  isExiting ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+                style={{
+                  pointerEvents: isExiting ? 'none' : 'auto',
+                  touchAction: 'manipulation', // 모바일 터치 최적화
+                }}
+              >
+                {isExiting ? '처리 중...' : '나가기'}
+              </button>
+              <button
+                onClick={() => {
+                  if (!isExiting) {
+                    setShowExitConfirm(false)
+                  }
+                }}
+                disabled={isExiting}
+                className={`flex-1 px-4 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-500 font-semibold transition-all ${
+                  isExiting ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+                style={{
+                  pointerEvents: isExiting ? 'none' : 'auto',
+                  touchAction: 'manipulation', // 모바일 터치 최적화
+                }}
+              >
+                취소
+              </button>
+            </div>
+          </motion.div>
+        </div>
       )}
     </div>
   )

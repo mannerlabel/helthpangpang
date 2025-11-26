@@ -2235,6 +2235,8 @@ class DatabaseService {
   async getCrewMembers(crewId: string): Promise<CrewMember[]> {
     await this.initialize()
     
+    console.log('📋 getCrewMembers 호출:', { crewId, useSupabase: USE_SUPABASE && !!supabase })
+    
     if (USE_SUPABASE && supabase) {
       if (!supabase) throw new Error('Supabase client not initialized')
       
@@ -2244,13 +2246,32 @@ class DatabaseService {
         .eq('crew_id', crewId)
       
       if (error) {
-        console.error('crew_members 조회 에러:', error)
+        console.error('❌ crew_members 조회 에러:', error)
         throw error
       }
+      
+      console.log('✅ getCrewMembers 결과:', {
+        crewId,
+        memberCount: data?.length || 0,
+        members: data?.map(m => ({
+          id: m.id,
+          user_id: m.user_id,
+          crew_id: m.crew_id,
+          video_enabled: m.video_enabled,
+          audio_enabled: m.audio_enabled,
+        })) || [],
+      })
+      
       return (data || []).map(m => this.mapSupabaseCrewMember(m))
     } else {
     const members = this.readTable<CrewMember>('crew_members')
-    return members.filter((m) => m.crewId === crewId)
+      const filtered = members.filter((m) => m.crewId === crewId)
+      console.log('✅ getCrewMembers 결과 (localStorage):', {
+        crewId,
+        memberCount: filtered.length,
+        members: filtered.map(m => ({ id: m.id, userId: m.userId, videoEnabled: m.videoEnabled })),
+      })
+      return filtered
     }
   }
 
@@ -2296,8 +2317,24 @@ class DatabaseService {
       }
       
       const updateData: any = {}
-      if (updates.videoEnabled !== undefined) updateData.video_enabled = updates.videoEnabled
-      if (updates.audioEnabled !== undefined) updateData.audio_enabled = updates.audioEnabled
+      if (updates.videoEnabled !== undefined) {
+        updateData.video_enabled = updates.videoEnabled
+        console.log(`📹 updateCrewMember: video_enabled 업데이트`, {
+          crewId,
+          userId,
+          supabaseUserId,
+          videoEnabled: updates.videoEnabled,
+        })
+      }
+      if (updates.audioEnabled !== undefined) {
+        updateData.audio_enabled = updates.audioEnabled
+        console.log(`🔊 updateCrewMember: audio_enabled 업데이트`, {
+          crewId,
+          userId,
+          supabaseUserId,
+          audioEnabled: updates.audioEnabled,
+        })
+      }
       if (updates.role !== undefined) updateData.role = updates.role
 
       const { data, error } = await supabase

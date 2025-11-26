@@ -48,7 +48,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 3000,
-      host: '0.0.0.0', // 외부 접근 허용 (ngrok 사용 시 필요)
+      host: '0.0.0.0', // 외부 접근 허용 (공유기 포워딩 및 ngrok 사용 시 필요)
       open: true,
       // HTTPS 설정
       // 카메라 접근을 위해서는 HTTPS 필수 (브라우저 보안 정책)
@@ -59,8 +59,8 @@ export default defineConfig(({ mode }) => {
         
         if (existsSync(keyPath) && existsSync(certPath)) {
           console.log('🔒 HTTPS 서버 실행 중')
-          console.log('   외부 접속: https://vinedev.monster:3000')
-          console.log('   로컬 접속: https://localhost:3000 (인증서 경고 발생 가능)')
+          console.log('   로컬 접속: https://localhost:3000')
+          console.log('   외부 접속: https://vinedev.monster:7677 (공유기 포워딩: 7677 -> 3000)')
           console.log('   카메라 접근을 위해 HTTPS 필수입니다.')
           return {
             key: readFileSync(keyPath),
