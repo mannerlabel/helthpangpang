@@ -117,6 +117,10 @@ const ResultPage = () => {
       }
       
       // 중복 체크: 데이터베이스에서 동일한 세션 ID가 이미 존재하는지 확인
+      // 조깅 세션인 경우 exercise_sessions가 아닌 jogging_sessions에 저장되므로 건너뜀
+      const isJoggingSession = session.mode === 'jogging' || session.mode === 'jogging-crew' || session.config?.type === 'jogging'
+      
+      if (!isJoggingSession) {
       try {
         const user = authService.getCurrentUser()
         if (!user) {
@@ -133,7 +137,13 @@ const ResultPage = () => {
         }
       } catch (checkError) {
         // getExerciseSessionById가 실패해도 계속 진행 (새 세션이거나 조회 실패일 수 있음)
+          // UUID 형식 에러는 조깅 세션이 아닌 경우에만 발생하므로 로그만 출력
+          if ((checkError as any)?.code === '22P02') {
+            console.log('기존 세션 확인 중 UUID 형식 에러 (계속 진행):', checkError)
+          } else {
         console.log('기존 세션 확인 중 오류 (계속 진행):', checkError)
+          }
+        }
       }
       
       // 저장 시작 플래그 설정
@@ -735,8 +745,32 @@ const ResultPage = () => {
 
         {/* 버튼 */}
         <div className="flex gap-4">
-          {session.mode === 'crew' && crewId ? (
-            // 크루 모드인 경우
+          {(() => {
+            // 조깅 세션인지 확인
+            const isJoggingSession = session.mode === 'jogging' || session.mode === 'jogging-crew' || session.config?.type === 'jogging'
+            
+            if (isJoggingSession) {
+              // 조깅 세션인 경우: '목록보기' 버튼만 표시
+              const isJoggingCrew = session.mode === 'jogging-crew' || (session.mode === 'jogging' && crewId)
+              
+              return (
+                <button
+                  onClick={() => {
+                    // 조깅(함께)인 경우 크루 목록으로, 조깅(혼자)인 경우 혼자 목록으로 이동
+                    if (isJoggingCrew) {
+                      navigate('/jogging-crew/my-crews')
+                    } else {
+                      navigate('/jogging-alone')
+                    }
+                  }}
+                  className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition font-semibold"
+                >
+                  목록보기
+                </button>
+              )
+            } else if (session.mode === 'crew' && crewId) {
+              // 일반 크루 모드인 경우
+              return (
             <>
               <button
                 onClick={() => {
@@ -757,20 +791,18 @@ const ResultPage = () => {
               </button>
               <button
                 onClick={() => {
-                  const user = authService.getCurrentUser()
-                  if (user && adminService.isAdmin(user)) {
-                    navigate('/admin/dashboard')
-                  } else {
-                    navigate('/mode-select')
-                  }
+                      // 크루 목록으로 이동
+                      navigate('/crew/my-crews')
                 }}
-                className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition"
+                    className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition font-semibold"
               >
-                홈으로
+                    목록으로
               </button>
             </>
-          ) : (
+              )
+            } else {
             // 싱글 모드인 경우
+              return (
             <>
               <button
                 onClick={async () => {
@@ -806,29 +838,27 @@ const ResultPage = () => {
                       },
                     })
                   } else {
-                    // config도 없으면 모드 선택으로 이동
-                    navigate('/mode-select')
+                        // config도 없으면 싱글 모드 목록으로 이동
+                        navigate('/single')
                   }
                 }}
-                className="flex-1 px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition"
+                    className="flex-1 px-6 py-4 bg-gray-700 text-white rounded-xl hover:bg-gray-600 transition font-semibold"
               >
                 다시 시작
               </button>
               <button
                 onClick={() => {
-                  const user = authService.getCurrentUser()
-                  if (user && adminService.isAdmin(user)) {
-                    navigate('/admin/dashboard')
-                  } else {
-                    navigate('/mode-select')
-                  }
+                      // 싱글 모드 목록으로 이동
+                      navigate('/single')
                 }}
-                className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition"
+                    className="flex-1 px-6 py-4 bg-primary-500 text-white rounded-xl hover:bg-primary-600 transition font-semibold"
               >
-                홈으로
+                    목록으로
               </button>
             </>
-          )}
+              )
+            }
+          })()}
         </div>
       </div>
     </div>

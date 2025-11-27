@@ -16,8 +16,6 @@ const JoggingCrewListPage = () => {
   const [myCrews, setMyCrews] = useState<JoggingCrew[]>([])
   const [sortedCrews, setSortedCrews] = useState<JoggingCrew[]>([])
   const [sortBy, setSortBy] = useState<'created' | 'recommendations'>('created')
-  const [videoEnabled, setVideoEnabled] = useState(false)
-  const [audioEnabled, setAudioEnabled] = useState(false)
   const [hasRecommendedMap, setHasRecommendedMap] = useState<Record<string, boolean>>({})
   const [hasCancelledMap, setHasCancelledMap] = useState<Record<string, boolean>>({})
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({})
@@ -206,11 +204,12 @@ const JoggingCrewListPage = () => {
           targetTime: crew.targetTime,
           alarm: crew.alarm,
           togetherConfig: {
-            videoShare: videoEnabled,
-            audioShare: audioEnabled,
+            videoShare: false,
+            audioShare: false,
           },
         },
         crewId: crew.id,
+        crewName: crew.name, // 방 제목 전달
       },
     })
   }
@@ -370,37 +369,6 @@ const JoggingCrewListPage = () => {
           </button>
         </div>
 
-        {/* 영상/음성 토글 버튼 */}
-        <div className="bg-gray-800/90 rounded-2xl p-3 mb-6">
-          <div className="flex items-center justify-between">
-            <span className="text-white font-semibold text-sm">미디어공유</span>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setVideoEnabled(!videoEnabled)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold text-sm transition ${
-                  videoEnabled
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                }`}
-              >
-                <span>📹</span>
-                <span>영상 {videoEnabled ? 'ON' : 'OFF'}</span>
-              </button>
-              <button
-                onClick={() => setAudioEnabled(!audioEnabled)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold text-sm transition ${
-                  audioEnabled
-                    ? 'bg-green-500 text-white'
-                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                }`}
-              >
-                <span>🎤</span>
-                <span>음성 {audioEnabled ? 'ON' : 'OFF'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
         {sortedCrews.length === 0 ? (
           <div className="bg-gray-800/90 rounded-2xl p-12 text-center">
             <div className="text-6xl mb-4">👥</div>
@@ -456,7 +424,7 @@ const JoggingCrewListPage = () => {
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">운동 설정:</span>
+                        <span className="text-gray-400">목표 설정:</span>
                         <span className="text-white ml-2">
                           {crew.targetDistance ? `${crew.targetDistance}km` : ''}
                           {crew.targetDistance && crew.targetTime ? ' / ' : ''}

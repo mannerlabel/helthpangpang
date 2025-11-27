@@ -219,6 +219,7 @@ const AdminDashboardPage = () => {
   const [singleGoalPagination, setSingleGoalPagination] = useState({ offset: 0, hasMore: true, loading: false })
   const [joggingGoalPagination, setJoggingGoalPagination] = useState({ offset: 0, hasMore: true, loading: false })
   const [announcementPagination, setAnnouncementPagination] = useState({ offset: 0, hasMore: true, loading: false })
+  const [loginHistoryPagination, setLoginHistoryPagination] = useState({ offset: 0, hasMore: true, loading: false })
   
   const PAGE_SIZE = 20
 
@@ -230,122 +231,35 @@ const AdminDashboardPage = () => {
       return
     }
 
-    loadData()
+    // 초기 로드 시 통계만 먼저 로드 (빠른 초기 로딩)
+    loadStats(true)
     // 초기 로드 시 selectedUser를 null로 설정하여 전체 히스토리 표시
     setSelectedUser(null)
+    // 초기 로드 시 각 섹션의 첫 페이지 로드
+    loadUsers()
+    loadCrews()
+    loadGoals()
+    loadAnnouncements()
+    loadLoginHistory()
   }, [navigate])
 
-  const loadData = async () => {
+  // 통계만 로드 (초기 로드 최적화 및 reload)
+  const loadStats = async (isInitialLoad: boolean = false) => {
     try {
-      setLoading(true)
-      const [dashboardStats, allLoginHistory, usersResult, allDeletedUsers, crewsResult, joggingCrewsResult, singleGoalsResult, joggingGoalsResult, announcementsResult, announcementStatsData] = await Promise.all([
-        adminService.getDashboardStats(),
-        loginHistoryService.getAllLoginHistory(100),
-        adminService.getAllUsers(PAGE_SIZE, 0),
-        adminService.getDeletedUsers(),
-        adminService.getAllCrewsForAdmin(PAGE_SIZE, 0),
-        adminService.getAllJoggingCrewsForAdmin(PAGE_SIZE, 0),
-        adminService.getAllSingleGoalsForAdmin(PAGE_SIZE, 0),
-        adminService.getAllJoggingGoalsForAdmin(PAGE_SIZE, 0),
-        adminService.getAllAnnouncements(PAGE_SIZE, 0),
-        adminService.getAnnouncementStats(),
-      ])
+      if (isInitialLoad) {
+        setLoading(true)
+      }
+      const dashboardStats = await adminService.getDashboardStats()
       setStats(dashboardStats)
-      setLoginHistory(allLoginHistory)
-      const filteredUsers = usersResult.data.filter(u => !u.isDeleted)
-      setUsers(filteredUsers)
-      setDeletedUsers(allDeletedUsers)
-      
-      // 사용자 계급 가져오기
-      const userRankMap: Record<string, number> = {}
-      for (const user of filteredUsers) {
-        try {
-          const rank = await rankService.getUserRank(user.id)
-          userRankMap[user.id] = rank
-        } catch (error) {
-          console.error(`사용자 ${user.id}의 계급 가져오기 실패:`, error)
-          userRankMap[user.id] = 1
-        }
-      }
-      setUserRanks(userRankMap)
-      
-      setCrews(crewsResult.data)
-      setJoggingCrews(joggingCrewsResult.data)
-      setSingleGoals(singleGoalsResult.data)
-      setJoggingGoals(joggingGoalsResult.data)
-      setAnnouncements(announcementsResult.data)
-      setAnnouncementStats(announcementStatsData)
-      
-      // 페이지네이션 상태 업데이트
-      setUserPagination({ offset: PAGE_SIZE, hasMore: usersResult.hasMore, loading: false })
-      setCrewPagination({ offset: PAGE_SIZE, hasMore: crewsResult.hasMore, loading: false })
-      setJoggingCrewPagination({ offset: PAGE_SIZE, hasMore: joggingCrewsResult.hasMore, loading: false })
-      setSingleGoalPagination({ offset: PAGE_SIZE, hasMore: singleGoalsResult.hasMore, loading: false })
-      setJoggingGoalPagination({ offset: PAGE_SIZE, hasMore: joggingGoalsResult.hasMore, loading: false })
-      setAnnouncementPagination({ offset: PAGE_SIZE, hasMore: announcementsResult.hasMore, loading: false })
-      
-      // 생성자 정보 가져오기 및 계급 확인
-      const creatorMap: Record<string, string> = {}
-      const creatorRankMap: Record<string, number> = {}
-      const crewRankMap: Record<string, number> = {}
-      for (const crew of [...crewsResult.data, ...joggingCrewsResult.data]) {
-        try {
-          const creator = await databaseService.getUserById(crew.createdBy)
-          if (creator) {
-            creatorMap[crew.id] = creator.name
-            // 생성자 계급 가져오기
-            const creatorRank = await rankService.getUserRank(crew.createdBy)
-            creatorRankMap[crew.id] = creatorRank
-          }
-          // 크루 계급 가져오기
-          const isJoggingCrew = 'targetDistance' in crew
-          const crewRank = await rankService.getCrewRank(crew.id, isJoggingCrew)
-          crewRankMap[crew.id] = crewRank
-        } catch (error) {
-          console.error(`크루 ${crew.id}의 생성자 정보 가져오기 실패:`, error)
-        }
-      }
-      setCreatorMap(creatorMap)
-      setCreatorRanks(creatorRankMap)
-      setCrewRanks(crewRankMap)
-
-      // 목표 생성자 정보 가져오기 및 계급 확인
-      const goalCreatorMap: Record<string, string> = {}
-      const goalCreatorRankMap: Record<string, number> = {}
-      for (const goal of [...singleGoalsResult.data, ...joggingGoalsResult.data]) {
-        try {
-          const creator = await databaseService.getUserById(goal.createdBy)
-          if (creator) {
-            goalCreatorMap[goal.id] = creator.name
-            // 생성자 계급 가져오기
-            const creatorRank = await rankService.getUserRank(goal.createdBy)
-            goalCreatorRankMap[goal.id] = creatorRank
-          }
-        } catch (error) {
-          console.error(`목표 ${goal.id}의 생성자 정보 가져오기 실패:`, error)
-        }
-      }
-      setGoalCreatorMap(goalCreatorMap)
-      setGoalCreatorRanks(goalCreatorRankMap)
-
-      // 공지사항 생성자 정보 가져오기
-      const announcementCreatorMap: Record<string, string> = {}
-      for (const announcement of announcementsResult.data) {
-        try {
-          const creator = await databaseService.getUserById(announcement.createdBy)
-          if (creator) {
-            announcementCreatorMap[announcement.id] = creator.name
-          }
-        } catch (error) {
-          console.error(`공지사항 ${announcement.id}의 생성자 정보 가져오기 실패:`, error)
-        }
-      }
-      setAnnouncementCreatorMap(announcementCreatorMap)
     } catch (error) {
-      console.error('데이터 로드 실패:', error)
-      alert('데이터를 불러오는데 실패했습니다.')
+      console.error('통계 로드 실패:', error)
+      if (isInitialLoad) {
+        alert('통계를 불러오는데 실패했습니다.')
+      }
     } finally {
-      setLoading(false)
+      if (isInitialLoad) {
+        setLoading(false)
+      }
     }
   }
 
@@ -500,31 +414,56 @@ const AdminDashboardPage = () => {
     }
   }
 
-  // 통계만 reload
-  const loadStats = async () => {
-    try {
-      const dashboardStats = await adminService.getDashboardStats()
-      setStats(dashboardStats)
-    } catch (error) {
-      console.error('통계 로드 실패:', error)
-    }
-  }
 
-  // 로그인 히스토리만 reload
+  // 로그인 히스토리만 reload (초기화)
   const loadLoginHistory = async (userId: string | null | undefined = undefined) => {
     try {
+      setLoginHistoryPagination(prev => ({ ...prev, loading: true, offset: 0 }))
       // userId가 명시적으로 전달된 경우 (null 포함) 그 값을 사용
       // undefined인 경우에만 selectedUser 상태를 사용
       const targetUserId = userId !== undefined ? userId : selectedUser
       if (targetUserId) {
-        const history = await loginHistoryService.getUserLoginHistory(targetUserId, 50)
-        setLoginHistory(history)
+        const result = await loginHistoryService.getUserLoginHistory(targetUserId, PAGE_SIZE, 0)
+        setLoginHistory(result.data)
+        setLoginHistoryPagination({ offset: PAGE_SIZE, hasMore: result.hasMore, loading: false })
       } else {
-        const allHistory = await loginHistoryService.getAllLoginHistory(100)
-        setLoginHistory(allHistory)
+        const result = await loginHistoryService.getAllLoginHistory(PAGE_SIZE, 0)
+        setLoginHistory(result.data)
+        setLoginHistoryPagination({ offset: PAGE_SIZE, hasMore: result.hasMore, loading: false })
       }
     } catch (error) {
       console.error('로그인 히스토리 로드 실패:', error)
+      setLoginHistoryPagination(prev => ({ ...prev, loading: false }))
+    }
+  }
+
+  // 로그인 히스토리 더 불러오기 (무한 스크롤)
+  const loadMoreLoginHistory = async () => {
+    if (loginHistoryPagination.loading || !loginHistoryPagination.hasMore) return
+    
+    try {
+      setLoginHistoryPagination(prev => ({ ...prev, loading: true }))
+      const targetUserId = selectedUser
+      if (targetUserId) {
+        const result = await loginHistoryService.getUserLoginHistory(targetUserId, PAGE_SIZE, loginHistoryPagination.offset)
+        setLoginHistory(prev => [...prev, ...result.data])
+        setLoginHistoryPagination({ 
+          offset: loginHistoryPagination.offset + PAGE_SIZE, 
+          hasMore: result.hasMore, 
+          loading: false 
+        })
+      } else {
+        const result = await loginHistoryService.getAllLoginHistory(PAGE_SIZE, loginHistoryPagination.offset)
+        setLoginHistory(prev => [...prev, ...result.data])
+        setLoginHistoryPagination({ 
+          offset: loginHistoryPagination.offset + PAGE_SIZE, 
+          hasMore: result.hasMore, 
+          loading: false 
+        })
+      }
+    } catch (error) {
+      console.error('로그인 히스토리 추가 로드 실패:', error)
+      setLoginHistoryPagination(prev => ({ ...prev, loading: false }))
     }
   }
 
@@ -650,11 +589,9 @@ const AdminDashboardPage = () => {
       const [announcementsResult, announcementStatsData] = await Promise.all([
         adminService.getAllAnnouncements(PAGE_SIZE, 0),
         adminService.getAnnouncementStats(),
-        adminService.getAllApiKeys(),
       ])
       setAnnouncements(announcementsResult.data)
       setAnnouncementStats(announcementStatsData)
-      setApiKeys(apiKeysResult)
       
       // 공지사항 생성자 정보 가져오기
       const announcementCreatorMap: Record<string, string> = {}
@@ -744,6 +681,12 @@ const AdminDashboardPage = () => {
     hasMore: announcementPagination.hasMore,
     loading: announcementPagination.loading,
     onLoadMore: loadMoreAnnouncements,
+  })
+
+  const { elementRef: loginHistoryScrollRef } = useInfiniteScroll({
+    hasMore: loginHistoryPagination.hasMore,
+    loading: loginHistoryPagination.loading,
+    onLoadMore: loadMoreLoginHistory,
   })
 
   // 목표 체크박스 토글
@@ -1073,8 +1016,9 @@ const AdminDashboardPage = () => {
 
   const getUserLoginHistory = async (userId: string) => {
     setSelectedUser(userId)
-    const history = await loginHistoryService.getUserLoginHistory(userId, 50)
-    setLoginHistory(history)
+    const result = await loginHistoryService.getUserLoginHistory(userId, PAGE_SIZE, 0)
+    setLoginHistory(result.data)
+    setLoginHistoryPagination({ offset: PAGE_SIZE, hasMore: result.hasMore, loading: false })
   }
 
   const getLoginData = () => {
@@ -1650,29 +1594,32 @@ const AdminDashboardPage = () => {
               <h2 className="text-xl md:text-2xl font-bold text-white">
                 📋 로그인 히스토리
               </h2>
+            </div>
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={async () => {
                   await loadLoginHistory()
                 }}
-                className="text-gray-400 hover:text-gray-200 text-sm"
+                className="px-3 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 text-xs md:text-sm font-semibold flex items-center gap-1.5"
                 title="Reload"
               >
-                ↻
+                <span>↻</span>
+                <span className="hidden sm:inline">Reload</span>
+              </button>
+              <button
+                onClick={async () => {
+                  setSelectedUser(null)
+                  await loadLoginHistory(null)
+                }}
+                className={`px-3 py-2 rounded-lg text-xs sm:text-sm ${
+                  selectedUser 
+                    ? 'bg-gray-700 text-white hover:bg-gray-600' 
+                    : 'bg-blue-500 text-white hover:bg-blue-600'
+                }`}
+              >
+                All user
               </button>
             </div>
-            <button
-              onClick={async () => {
-                setSelectedUser(null)
-                await loadLoginHistory(null)
-              }}
-              className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm ${
-                selectedUser 
-                  ? 'bg-gray-700 text-white hover:bg-gray-600' 
-                  : 'bg-blue-500 text-white hover:bg-blue-600'
-              }`}
-            >
-              All user
-            </button>
           </div>
           <div className="max-h-96 overflow-y-auto">
             <div className="space-y-2">
@@ -1715,6 +1662,15 @@ const AdminDashboardPage = () => {
                     </div>
                   )
                 })
+              )}
+              
+              {/* 무한 스크롤 트리거 */}
+              {loginHistoryPagination.hasMore && (
+                <div ref={loginHistoryScrollRef} className="py-4 text-center">
+                  {loginHistoryPagination.loading && (
+                    <div className="text-gray-400 text-sm">로딩 중...</div>
+                  )}
+                </div>
               )}
             </div>
           </div>

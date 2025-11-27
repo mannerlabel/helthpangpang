@@ -33,9 +33,9 @@ class JoggingService {
       }
 
       // 위치 정보는 비동기로 가져오되, 즉시 resolve하여 시작 지연 최소화
-      const positionOptions = {
+      const positionOptions: PositionOptions = {
         enableHighAccuracy: false, // PC에서는 false로 설정하여 빠른 시작
-        timeout: 10000, // 10초
+        timeout: 20000, // 20초로 증가 (타임아웃 에러 감소)
         maximumAge: 60000, // 1분 이내 캐시된 위치 허용
       }
 
@@ -124,7 +124,12 @@ class JoggingService {
       this.watchId = navigator.geolocation.watchPosition(
         handlePositionUpdate,
         (error) => {
-          console.error('위치 추적 오류:', error)
+          // 타임아웃 에러는 경고로 처리 (추적은 계속됨)
+          if (error.code === error.TIMEOUT) {
+            console.warn('⚠️ 위치 추적 타임아웃 (추적은 계속됩니다):', error.message)
+          } else {
+            console.error('위치 추적 오류:', error)
+          }
         },
         positionOptions
       )
@@ -153,7 +158,11 @@ class JoggingService {
         },
         (error) => {
           // 위치 정보를 가져오지 못해도 추적은 계속됨 (watchPosition이 이미 시작됨)
-          console.warn('초기 위치 정보를 가져오지 못했습니다. 추적은 계속됩니다:', error)
+          if (error.code === error.TIMEOUT) {
+            console.warn('⚠️ 초기 위치 정보 타임아웃 (추적은 계속됩니다):', error.message)
+          } else {
+            console.warn('⚠️ 초기 위치 정보를 가져오지 못했습니다. 추적은 계속됩니다:', error)
+          }
         },
         positionOptions
       )

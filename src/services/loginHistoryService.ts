@@ -132,68 +132,89 @@ class LoginHistoryService {
     }
   }
 
-  // 사용자의 로그인 히스토리 조회
-  async getUserLoginHistory(userId: string, limit: number = 100): Promise<LoginHistory[]> {
+  // 사용자의 로그인 히스토리 조회 (페이지네이션 지원)
+  async getUserLoginHistory(userId: string, limit: number = 100, offset: number = 0): Promise<{ data: LoginHistory[]; hasMore: boolean }> {
     try {
+      // 전체 개수 조회
+      const { count } = await supabase
+        .from('login_history')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+
       const { data, error } = await supabase
         .from('login_history')
         .select('*')
         .eq('user_id', userId)
         .order('login_at', { ascending: false })
-        .limit(limit)
+        .range(offset, offset + limit - 1)
 
       if (error) {
         console.error('로그인 히스토리 조회 실패:', error)
-        return []
+        return { data: [], hasMore: false }
       }
 
-      return (data || []).map((item: any) => ({
-        id: item.id,
-        userId: item.user_id,
-        loginAt: new Date(item.login_at).getTime(),
-        logoutAt: item.logout_at ? new Date(item.logout_at).getTime() : undefined,
-        sessionDuration: item.session_duration || undefined,
-        deviceType: item.device_type,
-        os: item.os,
-        browser: item.browser,
-        ipAddress: item.ip_address,
-        userAgent: item.user_agent,
-      }))
+      const hasMore = count ? offset + limit < count : false
+
+      return {
+        data: (data || []).map((item: any) => ({
+          id: item.id,
+          userId: item.user_id,
+          loginAt: new Date(item.login_at).getTime(),
+          logoutAt: item.logout_at ? new Date(item.logout_at).getTime() : undefined,
+          sessionDuration: item.session_duration || undefined,
+          deviceType: item.device_type,
+          os: item.os,
+          browser: item.browser,
+          ipAddress: item.ip_address,
+          userAgent: item.user_agent,
+        })),
+        hasMore,
+      }
     } catch (error) {
       console.error('로그인 히스토리 조회 중 오류:', error)
-      return []
+      return { data: [], hasMore: false }
     }
   }
 
-  // 모든 사용자의 로그인 히스토리 조회 (관리자용)
-  async getAllLoginHistory(limit: number = 1000): Promise<LoginHistory[]> {
+  // 모든 사용자의 로그인 히스토리 조회 (관리자용, 페이지네이션 지원)
+  async getAllLoginHistory(limit: number = 100, offset: number = 0): Promise<{ data: LoginHistory[]; hasMore: boolean }> {
     try {
+      // 전체 개수 조회
+      const { count } = await supabase
+        .from('login_history')
+        .select('*', { count: 'exact', head: true })
+
       const { data, error } = await supabase
         .from('login_history')
         .select('*')
         .order('login_at', { ascending: false })
-        .limit(limit)
+        .range(offset, offset + limit - 1)
 
       if (error) {
         console.error('전체 로그인 히스토리 조회 실패:', error)
-        return []
+        return { data: [], hasMore: false }
       }
 
-      return (data || []).map((item: any) => ({
-        id: item.id,
-        userId: item.user_id,
-        loginAt: new Date(item.login_at).getTime(),
-        logoutAt: item.logout_at ? new Date(item.logout_at).getTime() : undefined,
-        sessionDuration: item.session_duration || undefined,
-        deviceType: item.device_type,
-        os: item.os,
-        browser: item.browser,
-        ipAddress: item.ip_address,
-        userAgent: item.user_agent,
-      }))
+      const hasMore = count ? offset + limit < count : false
+
+      return {
+        data: (data || []).map((item: any) => ({
+          id: item.id,
+          userId: item.user_id,
+          loginAt: new Date(item.login_at).getTime(),
+          logoutAt: item.logout_at ? new Date(item.logout_at).getTime() : undefined,
+          sessionDuration: item.session_duration || undefined,
+          deviceType: item.device_type,
+          os: item.os,
+          browser: item.browser,
+          ipAddress: item.ip_address,
+          userAgent: item.user_agent,
+        })),
+        hasMore,
+      }
     } catch (error) {
       console.error('전체 로그인 히스토리 조회 중 오류:', error)
-      return []
+      return { data: [], hasMore: false }
     }
   }
 

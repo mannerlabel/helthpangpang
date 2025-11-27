@@ -247,5 +247,6 @@ export interface JoggingGoal {
   createdAt: number // 생성 시간
   createdBy: string // 생성자 ID (Supabase user_id)
   isActive: boolean // 활성 상태
+  sharedCourseId?: string // 공유 코스에서 생성된 경우 공유 코스 ID
 }
 

@@ -122,6 +122,29 @@ export interface JoggingSession {
   score?: number // AI 분석 점수
 }
 
+export interface SharedJoggingCourse {
+  id: string
+  userId: string // 생성자 ID
+  name?: string // 코스 이름 (선택사항)
+  route: Array<{ lat: number; lng: number; timestamp: number }>
+  totalDistance: number // 총 거리 (km)
+  createdAt: number
+  updatedAt?: number
+}
+
+// 실시간 조깅 경로 공유 (조깅크루용)
+export interface RealtimeJoggingRoute {
+  id: string
+  userId: string
+  crewId: string
+  userName?: string // 사용자 이름 (조회 시 조인)
+  route: Array<{ lat: number; lng: number; timestamp: number }>
+  totalDistance: number // 누적 거리 (km)
+  startTime: number
+  lastUpdateTime: number // 최근 경로 저장 시간
+  isActive: boolean // 조깅 중인지 여부
+}
+
 export interface ExerciseSession {
   id: string
   userId: string
@@ -1468,6 +1491,7 @@ class DatabaseService {
         }
       } catch (e: any) {
         console.error('❌ 추천 토글 중 오류:', e)
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
         console.error('에러 상세:', {
           code: e?.code,
           message: e?.message,
@@ -1863,6 +1887,7 @@ class DatabaseService {
         }
       } catch (e: any) {
         console.error('❌ 조깅 크루 추천 토글 중 오류:', e)
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
         console.error('에러 상세:', {
           code: e?.code,
           message: e?.message,
@@ -2337,6 +2362,71 @@ class DatabaseService {
       }
       if (updates.role !== undefined) updateData.role = updates.role
 
+      // 먼저 멤버가 존재하는지 확인
+      const { data: existingMember, error: checkError } = await supabase
+        .from('crew_members')
+        .select('*')
+        .eq('crew_id', crewId)
+        .eq('user_id', supabaseUserId)
+        .maybeSingle() // single() 대신 maybeSingle() 사용 (없을 수도 있음)
+      
+      if (checkError && checkError.code !== 'PGRST116') { // PGRST116은 "not found" 오류
+        console.error('crew_members 조회 에러:', checkError)
+        // 406 오류인 경우 RLS 정책 문제일 수 있음
+        if (checkError.code === 'PGRST301' || checkError.message?.includes('406')) {
+          console.warn('⚠️ RLS 정책 문제로 인한 조회 실패. 멤버를 새로 생성합니다.')
+        } else {
+          throw checkError
+        }
+      }
+
+      if (!existingMember) {
+        // 멤버가 없으면 생성 (upsert 방식)
+        // 조깅 크루인지 확인 (jogging_crews 테이블에 존재하는지 확인)
+        const { data: joggingCrew } = await supabase
+          .from('jogging_crews')
+          .select('id')
+          .eq('id', crewId)
+          .single()
+        
+        if (joggingCrew) {
+          // 조깅 크루인 경우: crew_members 테이블을 사용하지 않음
+          // 조깅 크루는 memberIds로 관리되므로 crew_members 테이블에 insert하지 않음
+          console.log('⚠️ 조깅 크루는 crew_members 테이블을 사용하지 않습니다. memberIds로 관리됩니다.')
+          // 조깅 크루의 경우 빈 CrewMember 객체 반환 (로컬 상태만 사용)
+          return {
+            id: `jogging_member_${supabaseUserId}_${Date.now()}`,
+            crewId: crewId,
+            userId: supabaseUserId,
+            role: 'member',
+            videoEnabled: updates.videoEnabled ?? false,
+            audioEnabled: updates.audioEnabled ?? false,
+            joinedAt: Date.now(),
+          }
+        }
+        
+        // 일반 크루인 경우에만 crew_members 테이블에 insert
+        console.log('📝 crew_members에 멤버가 없어서 생성:', { crewId, supabaseUserId })
+        const { data: newMember, error: insertError } = await supabase
+          .from('crew_members')
+          .insert({
+            crew_id: crewId,
+            user_id: supabaseUserId,
+            role: 'member',
+            video_enabled: updates.videoEnabled ?? false,
+            audio_enabled: updates.audioEnabled ?? false,
+          })
+          .select()
+          .single()
+
+        if (insertError) {
+          console.error('crew_members 생성 에러:', insertError)
+          throw insertError
+        }
+        return newMember ? this.mapSupabaseCrewMember(newMember) : null
+      }
+
+      // 멤버가 있으면 업데이트
       const { data, error } = await supabase
         .from('crew_members')
         .update(updateData)
@@ -2353,7 +2443,22 @@ class DatabaseService {
     } else {
       const members = this.readTable<CrewMember>('crew_members')
       const index = members.findIndex((m) => m.crewId === crewId && m.userId === userId)
-      if (index === -1) return null
+      if (index === -1) {
+        // 멤버가 없으면 생성 (upsert 방식)
+        console.log('📝 crew_members에 멤버가 없어서 생성 (localStorage):', { crewId, userId })
+        const newMember: CrewMember = {
+          id: `member_${crewId}_${userId}_${Date.now()}`,
+          crewId,
+          userId,
+          role: 'member',
+          videoEnabled: updates.videoEnabled ?? false,
+          audioEnabled: updates.audioEnabled ?? false,
+          joinedAt: Date.now(),
+        }
+        members.push(newMember)
+        this.writeTable('crew_members', members)
+        return newMember
+      }
       members[index] = { ...members[index], ...updates }
       this.writeTable('crew_members', members)
       return members[index]
@@ -3159,6 +3264,578 @@ class DatabaseService {
     sessions[index] = { ...sessions[index], ...updates }
     this.writeTable('jogging_sessions', sessions)
     return sessions[index]
+  }
+
+  async getJoggingSessionsByUserId(
+    userId: string,
+    options?: {
+      limit?: number
+      offset?: number
+      orderBy?: 'start_time' | 'end_time'
+      orderDirection?: 'asc' | 'desc'
+    }
+  ): Promise<{ sessions: JoggingSession[]; total: number; hasMore: boolean }> {
+    await this.initialize()
+    
+    const limit = options?.limit || 50
+    const offset = options?.offset || 0
+    const orderBy = options?.orderBy || 'end_time'
+    const orderDirection = options?.orderDirection || 'desc'
+
+    if (USE_SUPABASE && supabase) {
+      try {
+        // UUID 매핑
+        let supabaseUserId = userId
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        if (!uuidRegex.test(userId)) {
+          supabaseUserId = await this.getSupabaseUserId(userId)
+        }
+
+        // 총 개수 조회
+        const { count, error: countError } = await supabase
+          .from('jogging_sessions')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', supabaseUserId)
+          .eq('completed', true)
+
+        if (countError) {
+          console.error('❌ Supabase 조깅 세션 개수 조회 실패:', countError)
+          throw countError
+        }
+
+        // 페이지네이션으로 데이터 조회
+        let query = supabase
+          .from('jogging_sessions')
+          .select('*')
+          .eq('user_id', supabaseUserId)
+          .eq('completed', true)
+          .order(orderBy === 'start_time' ? 'start_time' : 'end_time', { ascending: orderDirection === 'asc' })
+          .range(offset, offset + limit - 1)
+
+        const { data, error } = await query
+
+        if (error) {
+          console.error('❌ Supabase 조깅 세션 조회 실패:', error)
+          throw error
+        }
+
+        const sessions = (data || []).map(s => this.mapSupabaseJoggingSession(s))
+        const total = count || 0
+        const hasMore = offset + limit < total
+
+        return { sessions, total, hasMore }
+      } catch (error) {
+        console.error('조깅 세션 조회 중 오류:', error)
+        throw error
+      }
+    } else {
+      const sessions = this.readTable<JoggingSession>('jogging_sessions')
+      const userSessions = sessions
+        .filter(s => s.userId === userId && s.completed)
+        .sort((a, b) => {
+          const aTime = orderBy === 'start_time' ? a.startTime : (a.endTime || a.startTime)
+          const bTime = orderBy === 'start_time' ? b.startTime : (b.endTime || b.startTime)
+          return orderDirection === 'asc' ? aTime - bTime : bTime - aTime
+        })
+      
+      const total = userSessions.length
+      const paginatedSessions = userSessions.slice(offset, offset + limit)
+      const hasMore = offset + limit < total
+
+      return { sessions: paginatedSessions, total, hasMore }
+    }
+  }
+
+  private mapSupabaseJoggingSession(data: any): JoggingSession {
+    return {
+      id: data.id,
+      userId: data.user_id,
+      crewId: data.crew_id || undefined,
+      mode: data.mode,
+      distance: data.distance,
+      averageSpeed: data.average_speed,
+      averageTime: data.average_time,
+      route: data.route || [],
+      startTime: new Date(data.start_time).getTime(),
+      endTime: data.end_time ? new Date(data.end_time).getTime() : undefined,
+      completed: data.completed,
+      score: data.score || undefined,
+    }
+  }
+
+  // ============ SharedJoggingCourse 관련 ============
+  async createSharedJoggingCourse(course: Omit<SharedJoggingCourse, 'id' | 'createdAt'>): Promise<SharedJoggingCourse> {
+    await this.initialize()
+    
+    if (USE_SUPABASE && supabase) {
+      try {
+        // UUID 매핑 (localStorage 사용자 ID를 Supabase UUID로 변환)
+        let supabaseUserId = course.userId
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        if (!uuidRegex.test(course.userId)) {
+          supabaseUserId = await this.getSupabaseUserId(course.userId)
+        }
+
+        const now = Date.now()
+        const { data, error } = await supabase
+          .from('shared_jogging_courses')
+          .insert({
+            user_id: supabaseUserId,
+            name: course.name || null,
+            route: course.route,
+            total_distance: course.totalDistance,
+            created_at: new Date(now).toISOString(),
+          })
+          .select()
+          .single()
+
+        if (error) {
+          console.error('조깅 코스 공유 저장 실패:', error)
+          // RLS 정책 에러인 경우 더 자세한 메시지 제공
+          if (error.code === '42501') {
+            console.error('❌ RLS 정책 위반: shared_jogging_courses 테이블의 RLS 정책을 확인해주세요.')
+            console.error('요청한 사용자 ID:', course.userId)
+            console.error('변환된 Supabase UUID:', supabaseUserId)
+            console.error('')
+            console.error('🔧 해결 방법:')
+            console.error('1. Supabase SQL Editor에서 다음 중 하나를 실행하세요:')
+            console.error('   - docs/FIX_SHARED_JOGGING_COURSES_RLS.sql (RLS 정책 수정)')
+            console.error('   - docs/DISABLE_SHARED_JOGGING_COURSES_RLS.sql (RLS 완전 비활성화)')
+            console.error('')
+            console.error('2. 또는 Supabase 대시보드에서:')
+            console.error('   - Authentication → Policies → shared_jogging_courses')
+            console.error('   - INSERT 정책을 "TO anon, authenticated"로 변경')
+            console.error('   - WITH CHECK를 "true"로 변경')
+          }
+          throw error
+        }
+
+        return {
+          id: data.id,
+          userId: course.userId, // 원본 userId 유지
+          name: data.name || undefined,
+          route: data.route,
+          totalDistance: data.total_distance,
+          createdAt: new Date(data.created_at).getTime(),
+          updatedAt: data.updated_at ? new Date(data.updated_at).getTime() : undefined,
+        }
+      } catch (error) {
+        console.error('조깅 코스 공유 저장 중 오류:', error)
+        throw error
+      }
+    } else {
+      const courses = this.readTable<SharedJoggingCourse>('shared_jogging_courses')
+      const now = Date.now()
+      const newCourse: SharedJoggingCourse = {
+        ...course,
+        id: `course_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        createdAt: now,
+      }
+      courses.push(newCourse)
+      this.writeTable('shared_jogging_courses', courses)
+      return newCourse
+    }
+  }
+
+  async getSharedJoggingCourses(limit: number = 50, offset: number = 0): Promise<{ data: SharedJoggingCourse[]; hasMore: boolean }> {
+    await this.initialize()
+    
+    if (USE_SUPABASE && supabase) {
+      try {
+        // 전체 개수 조회
+        const { count } = await supabase
+          .from('shared_jogging_courses')
+          .select('*', { count: 'exact', head: true })
+
+        const { data, error } = await supabase
+          .from('shared_jogging_courses')
+          .select(`
+            *,
+            users!shared_jogging_courses_user_id_fkey(id, name, email)
+          `)
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1)
+
+        if (error) {
+          console.error('공유 조깅 코스 조회 실패:', error)
+          return { data: [], hasMore: false }
+        }
+
+        const hasMore = count ? offset + limit < count : false
+
+        // userId 매핑 (Supabase UUID를 localStorage userId로 변환)
+        const courses: SharedJoggingCourse[] = []
+        for (const item of data || []) {
+          try {
+            // Supabase UUID를 localStorage userId로 변환 시도
+            let originalUserId = item.user_id
+            // 역매핑 시도 (캐시에서 찾기)
+            for (const [localId, supabaseId] of this.userIdMappingCache.entries()) {
+              if (supabaseId === item.user_id) {
+                originalUserId = localId
+                break
+              }
+            }
+
+            courses.push({
+              id: item.id,
+              userId: originalUserId,
+              name: item.name || undefined,
+              route: item.route,
+              totalDistance: item.total_distance,
+              createdAt: new Date(item.created_at).getTime(),
+              updatedAt: item.updated_at ? new Date(item.updated_at).getTime() : undefined,
+            })
+          } catch (error) {
+            console.error('코스 변환 실패:', error)
+          }
+        }
+
+        return { data: courses, hasMore }
+      } catch (error) {
+        console.error('공유 조깅 코스 조회 중 오류:', error)
+        return { data: [], hasMore: false }
+      }
+    } else {
+      const courses = this.readTable<SharedJoggingCourse>('shared_jogging_courses')
+      const sorted = courses.sort((a, b) => b.createdAt - a.createdAt)
+      const paginated = sorted.slice(offset, offset + limit)
+      return {
+        data: paginated,
+        hasMore: offset + limit < sorted.length,
+      }
+    }
+  }
+
+  async getSharedJoggingCourseById(id: string): Promise<SharedJoggingCourse | null> {
+    await this.initialize()
+    
+    if (USE_SUPABASE && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('shared_jogging_courses')
+          .select('*')
+          .eq('id', id)
+          .single()
+
+        if (error || !data) {
+          return null
+        }
+
+        // userId 역매핑
+        let originalUserId = data.user_id
+        for (const [localId, supabaseId] of this.userIdMappingCache.entries()) {
+          if (supabaseId === data.user_id) {
+            originalUserId = localId
+            break
+          }
+        }
+
+        return {
+          id: data.id,
+          userId: originalUserId,
+          name: data.name || undefined,
+          route: data.route,
+          totalDistance: data.total_distance,
+          createdAt: new Date(data.created_at).getTime(),
+          updatedAt: data.updated_at ? new Date(data.updated_at).getTime() : undefined,
+        }
+      } catch (error) {
+        console.error('공유 조깅 코스 조회 실패:', error)
+        return null
+      }
+    } else {
+      const courses = this.readTable<SharedJoggingCourse>('shared_jogging_courses')
+      return courses.find((c) => c.id === id) || null
+    }
+  }
+
+  async deleteSharedJoggingCourse(id: string, userId: string): Promise<boolean> {
+    await this.initialize()
+    
+    if (USE_SUPABASE && supabase) {
+      try {
+        // UUID 매핑
+        let supabaseUserId = userId
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        if (!uuidRegex.test(userId)) {
+          supabaseUserId = await this.getSupabaseUserId(userId)
+        }
+
+        // 소유자 확인
+        const course = await this.getSharedJoggingCourseById(id)
+        if (!course) {
+          return false
+        }
+
+        // userId 비교 (원본 userId와 비교)
+        let courseSupabaseUserId = course.userId
+        const courseUuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        if (!courseUuidRegex.test(course.userId)) {
+          courseSupabaseUserId = await this.getSupabaseUserId(course.userId)
+        }
+
+        if (courseSupabaseUserId !== supabaseUserId) {
+          throw new Error('본인이 생성한 코스만 삭제할 수 있습니다.')
+        }
+
+        const { error } = await supabase
+          .from('shared_jogging_courses')
+          .delete()
+          .eq('id', id)
+
+        if (error) {
+          console.error('조깅 코스 삭제 실패:', error)
+          return false
+        }
+
+        return true
+      } catch (error) {
+        console.error('조깅 코스 삭제 중 오류:', error)
+        return false
+      }
+    } else {
+      const courses = this.readTable<SharedJoggingCourse>('shared_jogging_courses')
+      const index = courses.findIndex((c) => c.id === id && c.userId === userId)
+      if (index === -1) return false
+      courses.splice(index, 1)
+      this.writeTable('shared_jogging_courses', courses)
+      return true
+    }
+  }
+
+  // ============ RealtimeJoggingRoute 관련 (조깅크루 실시간 경로 공유) ============
+  async upsertRealtimeJoggingRoute(route: Omit<RealtimeJoggingRoute, 'id'>): Promise<RealtimeJoggingRoute> {
+    await this.initialize()
+    
+    if (USE_SUPABASE && supabase) {
+      try {
+        // UUID 매핑
+        let supabaseUserId = route.userId
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        if (!uuidRegex.test(route.userId)) {
+          supabaseUserId = await this.getSupabaseUserId(route.userId)
+        }
+
+        // userName 가져오기 (route.userName이 없으면 데이터베이스에서 조회)
+        let userName = route.userName
+        if (!userName) {
+          const userProfile = await this.getUserById(route.userId)
+          userName = userProfile?.name || 'Unknown'
+        }
+
+        const now = Date.now()
+        
+        // user_name 컬럼이 있는지 확인하여 조건부로 포함
+        // SQL 마이그레이션 스크립트 실행 전까지는 user_name을 저장하지 않음
+        const upsertData: any = {
+          user_id: supabaseUserId,
+          crew_id: route.crewId,
+          route: route.route,
+          total_distance: route.totalDistance,
+          start_time: new Date(route.startTime).toISOString(),
+          last_update_time: new Date(route.lastUpdateTime).toISOString(),
+          is_active: route.isActive,
+        }
+        
+        // user_name 컬럼이 있으면 포함 (마이그레이션 후)
+        // 주석 해제: SQL 마이그레이션 스크립트 실행 후 활성화
+        // upsertData.user_name = userName
+        
+        const { data, error } = await supabase
+          .from('realtime_jogging_routes')
+          .upsert(upsertData, {
+            onConflict: 'user_id,crew_id',
+          })
+          .select()
+          .single()
+
+        if (error) {
+          console.error('실시간 경로 공유 저장 실패:', error)
+          throw error
+        }
+
+        return {
+          id: data.id,
+          userId: route.userId, // 원본 userId 유지
+          crewId: data.crew_id,
+          userName: userName, // route.userName 또는 조회한 userName 사용 (user_name 컬럼은 마이그레이션 후 사용)
+          route: data.route,
+          totalDistance: data.total_distance,
+          startTime: new Date(data.start_time).getTime(),
+          lastUpdateTime: new Date(data.last_update_time).getTime(),
+          isActive: data.is_active,
+        }
+      } catch (error) {
+        console.error('실시간 경로 공유 저장 중 오류:', error)
+        throw error
+      }
+    } else {
+      const routes = this.readTable<RealtimeJoggingRoute>('realtime_jogging_routes')
+      const existingIndex = routes.findIndex(r => r.userId === route.userId && r.crewId === route.crewId)
+      
+      if (existingIndex !== -1) {
+        routes[existingIndex] = { ...routes[existingIndex], ...route }
+      } else {
+        routes.push({
+          ...route,
+          id: `route_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        })
+      }
+      this.writeTable('realtime_jogging_routes', routes)
+      return routes[existingIndex !== -1 ? existingIndex : routes.length - 1]
+    }
+  }
+
+  async getRealtimeJoggingRoutesByCrew(crewId: string): Promise<RealtimeJoggingRoute[]> {
+    await this.initialize()
+    
+    if (USE_SUPABASE && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('realtime_jogging_routes')
+          .select(`
+            *,
+            users!realtime_jogging_routes_user_id_fkey(id, name, email)
+          `)
+          .eq('crew_id', crewId)
+          .eq('is_active', true) // 활성화된 경로만 조회
+          .order('last_update_time', { ascending: false })
+        
+        console.log('🔍 실시간 경로 조회 결과:', { 
+          crewId, 
+          dataCount: data?.length || 0,
+          data: data?.map(d => ({ 
+            user_id: d.user_id, 
+            user_name: d.user_name, 
+            is_active: d.is_active,
+            route_points: d.route?.length || 0,
+            users: d.users 
+          })) 
+        })
+
+        if (error) {
+          console.error('실시간 경로 조회 실패:', error)
+          return []
+        }
+
+        // userId 역매핑
+        const routes: RealtimeJoggingRoute[] = []
+        for (const item of data || []) {
+          try {
+            let originalUserId = item.user_id
+            for (const [localId, supabaseId] of this.userIdMappingCache.entries()) {
+              if (supabaseId === item.user_id) {
+                originalUserId = localId
+                break
+              }
+            }
+
+            // userName 가져오기 (users 조인 또는 user_name 필드)
+            let userName = item.user_name || 'Unknown'
+            if (item.users && typeof item.users === 'object' && 'name' in item.users) {
+              userName = (item.users as any).name || userName
+            }
+
+            routes.push({
+              id: item.id,
+              userId: originalUserId,
+              crewId: item.crew_id,
+              userName: userName,
+              route: item.route,
+              totalDistance: item.total_distance,
+              startTime: new Date(item.start_time).getTime(),
+              lastUpdateTime: new Date(item.last_update_time).getTime(),
+              isActive: item.is_active,
+            })
+          } catch (error) {
+            console.error('경로 변환 실패:', error)
+          }
+        }
+
+        return routes
+      } catch (error) {
+        console.error('실시간 경로 조회 중 오류:', error)
+        return []
+      }
+    } else {
+      const routes = this.readTable<RealtimeJoggingRoute>('realtime_jogging_routes')
+      return routes.filter(r => r.crewId === crewId && r.isActive)
+    }
+  }
+
+  async deactivateRealtimeJoggingRoute(userId: string, crewId: string): Promise<boolean> {
+    await this.initialize()
+    
+    if (USE_SUPABASE && supabase) {
+      try {
+        // UUID 매핑
+        let supabaseUserId = userId
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        if (!uuidRegex.test(userId)) {
+          supabaseUserId = await this.getSupabaseUserId(userId)
+        }
+
+        const { error } = await supabase
+          .from('realtime_jogging_routes')
+          .update({ is_active: false })
+          .eq('user_id', supabaseUserId)
+          .eq('crew_id', crewId)
+
+        if (error) {
+          console.error('실시간 경로 비활성화 실패:', error)
+          return false
+        }
+
+        return true
+      } catch (error) {
+        console.error('실시간 경로 비활성화 중 오류:', error)
+        return false
+      }
+    } else {
+      const routes = this.readTable<RealtimeJoggingRoute>('realtime_jogging_routes')
+      const index = routes.findIndex(r => r.userId === userId && r.crewId === crewId)
+      if (index !== -1) {
+        routes[index].isActive = false
+        this.writeTable('realtime_jogging_routes', routes)
+        return true
+      }
+      return false
+    }
+  }
+
+  // 크루의 모든 실시간 경로 비활성화 (조깅 종료 시 사용)
+  async deactivateAllRealtimeJoggingRoutesByCrew(crewId: string): Promise<boolean> {
+    await this.initialize()
+    
+    if (USE_SUPABASE && supabase) {
+      try {
+        const { error } = await supabase
+          .from('realtime_jogging_routes')
+          .update({ is_active: false })
+          .eq('crew_id', crewId)
+          .eq('is_active', true) // 활성화된 것만 비활성화
+
+        if (error) {
+          console.error('크루의 모든 실시간 경로 비활성화 실패:', error)
+          return false
+        }
+
+        console.log('✅ 크루의 모든 실시간 경로 비활성화 완료:', crewId)
+        return true
+      } catch (error) {
+        console.error('크루의 모든 실시간 경로 비활성화 중 오류:', error)
+        return false
+      }
+    } else {
+      const routes = this.readTable<RealtimeJoggingRoute>('realtime_jogging_routes')
+      const crewRoutes = routes.filter(r => r.crewId === crewId && r.isActive)
+      crewRoutes.forEach(route => {
+        route.isActive = false
+      })
+      this.writeTable('realtime_jogging_routes', routes)
+      return true
+    }
   }
 
   // ============ ExerciseSession 관련 ============
@@ -3977,6 +4654,7 @@ class DatabaseService {
             target_time: goal.targetTime || null,
             alarm: goal.alarm || null,
             background_music: goal.backgroundMusic || null,
+            shared_course_id: goal.sharedCourseId || null,
             is_active: true,
           })
           .select()
@@ -4089,6 +4767,7 @@ class DatabaseService {
         if (updates.targetTime !== undefined) updateData.target_time = updates.targetTime || null
         if (updates.alarm !== undefined) updateData.alarm = updates.alarm || null
         if (updates.backgroundMusic !== undefined) updateData.background_music = updates.backgroundMusic || null
+        if (updates.sharedCourseId !== undefined) updateData.shared_course_id = updates.sharedCourseId || null
         if (updates.isActive !== undefined) updateData.is_active = updates.isActive
         
         const { data, error } = await supabase
@@ -4156,6 +4835,7 @@ class DatabaseService {
       targetTime: goal.target_time || undefined,
       alarm: goal.alarm || undefined,
       backgroundMusic: goal.background_music || undefined,
+      sharedCourseId: goal.shared_course_id || undefined,
       createdAt: new Date(goal.created_at).getTime(),
       createdBy: goal.user_id,
       isActive: goal.is_active !== false,

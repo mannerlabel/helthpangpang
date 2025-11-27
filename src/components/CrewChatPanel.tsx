@@ -53,6 +53,42 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
   const [userRanks, setUserRanks] = useState<Record<string, number>>({}) // 사용자별 계급 캐시
   const weatherLoadedRef = useRef(false) // 날씨 정보가 이미 로드되었는지 추적
 
+  // localStorage에서 마지막 읽은 메시지 ID 로드
+  const getLastReadMessageId = (): string | null => {
+    try {
+      const user = authService.getCurrentUser()
+      if (!user) return null
+      const key = `lastReadMessageId_${crewId}_${user.id}`
+      return localStorage.getItem(key)
+    } catch (error) {
+      console.error('마지막 읽은 메시지 ID 로드 실패:', error)
+      return null
+    }
+  }
+
+  // localStorage에 마지막 읽은 메시지 ID 저장
+  const saveLastReadMessageId = (messageId: string) => {
+    try {
+      const user = authService.getCurrentUser()
+      if (!user) return
+      const key = `lastReadMessageId_${crewId}_${user.id}`
+      localStorage.setItem(key, messageId)
+      lastReadMessageIdRef.current = messageId
+      console.log('💬 마지막 읽은 메시지 ID 저장:', messageId, key)
+    } catch (error) {
+      console.error('마지막 읽은 메시지 ID 저장 실패:', error)
+    }
+  }
+
+  // 컴포넌트 마운트 시 localStorage에서 마지막 읽은 메시지 ID 로드
+  useEffect(() => {
+    const savedLastReadId = getLastReadMessageId()
+    if (savedLastReadId) {
+      lastReadMessageIdRef.current = savedLastReadId
+      console.log('💬 localStorage에서 마지막 읽은 메시지 ID 로드:', savedLastReadId)
+    }
+  }, [crewId])
+
   useEffect(() => {
     // 현재 사용자 ID 저장
     const user = authService.getCurrentUser()
@@ -78,6 +114,11 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
     } else {
       // 채팅창이 닫히면 날씨 로드 플래그 리셋
       weatherLoadedRef.current = false
+      // 채팅창이 닫혀있을 때도 주기적으로 메시지를 확인하여 새 메시지 알림을 받을 수 있도록 함
+      const interval = setInterval(() => {
+        loadMessages()
+      }, 3000) // 3초마다 새 메시지 확인 (채팅창이 닫혀있을 때는 조금 더 긴 간격)
+      return () => clearInterval(interval)
     }
   }, [isOpen, crewId])
 
@@ -215,7 +256,7 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
   useEffect(() => {
     if (isOpen && messages.length > 0) {
       const lastMessage = messages[messages.length - 1]
-      lastReadMessageIdRef.current = lastMessage.id
+      saveLastReadMessageId(lastMessage.id) // localStorage에 저장
       console.log('💬 채팅창 열림 - 마지막 메시지를 읽은 것으로 표시:', lastMessage.id)
       // 미확인 메시지 수 초기화
       if (onUnreadCountChange) {
@@ -226,7 +267,7 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
       // 채팅창이 닫힐 때는 마지막 읽은 메시지 ID를 유지 (초기화하지 않음)
       console.log('💬 채팅창 닫힘 - 마지막 읽은 메시지 ID 유지:', lastReadMessageIdRef.current)
     }
-  }, [isOpen, messages.length, onUnreadCountChange])
+  }, [isOpen, messages.length, onUnreadCountChange, crewId])
 
   // 채팅창이 열려있을 때 새 메시지가 오면 자동으로 읽은 것으로 표시 (스크롤이 맨 아래에 있을 때)
   useEffect(() => {
@@ -241,7 +282,7 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
           // 스크롤이 맨 아래에 있으면 마지막 메시지를 읽은 것으로 표시
           const lastMessage = messages[messages.length - 1]
           if (lastReadMessageIdRef.current !== lastMessage.id) {
-            lastReadMessageIdRef.current = lastMessage.id
+            saveLastReadMessageId(lastMessage.id) // localStorage에 저장
             console.log('💬 스크롤이 맨 아래 - 마지막 메시지를 읽은 것으로 표시:', lastMessage.id)
             if (onUnreadCountChange) {
               onUnreadCountChange(0)
@@ -250,7 +291,7 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
         }
       }
     }
-  }, [messages, isOpen, onUnreadCountChange])
+  }, [messages, isOpen, onUnreadCountChange, crewId])
 
   useEffect(() => {
     // 메시지가 추가되면 스크롤

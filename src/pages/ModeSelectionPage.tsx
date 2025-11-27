@@ -46,16 +46,20 @@ const ModeSelectionPage = () => {
   const [overlayPosition, setOverlayPosition] = useState<{ x: number; y: number } | null>(null)
   const [hasNewAnnouncement, setHasNewAnnouncement] = useState(false)
 
-  const calculateWeeklyData = (sessions: ExerciseSession[]): { 
+  const calculateWeeklyData = (sessions: ExerciseSession[], joggingSessions: any[] = []): { 
     date: string
     count: number
     details: Array<{ type: string; count: number; distance?: number }>
+    joggingCount: number
+    joggingTotalTime: number
   }[] => {
     const today = new Date()
     const weekData: { 
       date: string
       count: number
       details: Array<{ type: string; count: number; distance?: number }>
+      joggingCount: number
+      joggingTotalTime: number
     }[] = []
     
     for (let i = 6; i >= 0; i--) {
@@ -63,14 +67,21 @@ const ModeSelectionPage = () => {
       date.setDate(date.getDate() - i)
       const dateStr = date.toISOString().split('T')[0]
       
-      // 해당 날짜의 세션들 찾기
+      // 해당 날짜의 일반 운동 세션들 찾기
       const daySessions = sessions.filter(session => {
         if (!session.endTime && !session.startTime) return false
         const sessionDate = new Date(session.endTime || session.startTime || 0)
         return sessionDate.toISOString().split('T')[0] === dateStr
       })
       
-      // 해당 날짜의 총 카운트 계산
+      // 해당 날짜의 조깅 세션들 찾기
+      const dayJoggingSessions = joggingSessions.filter(session => {
+        if (!session.endTime && !session.startTime) return false
+        const sessionDate = new Date(session.endTime || session.startTime || 0)
+        return sessionDate.toISOString().split('T')[0] === dateStr
+      })
+      
+      // 해당 날짜의 총 카운트 계산 (일반 운동만)
       const totalCount = daySessions.reduce((sum, session) => {
         const sessionTotal = (session as any).totalCount || session.counts.length
         return sum + sessionTotal
@@ -110,10 +121,19 @@ const ModeSelectionPage = () => {
         distance: data.distance
       }))
       
+      // 조깅 세션 수 및 총 시간 계산
+      const joggingCount = dayJoggingSessions.length
+      const joggingTotalTime = dayJoggingSessions.reduce((sum, session) => {
+        const sessionTime = session.averageTime || (session.endTime && session.startTime ? session.endTime - session.startTime : 0)
+        return sum + sessionTime
+      }, 0)
+      
       weekData.push({
         date: dateStr,
         count: totalCount,
         details,
+        joggingCount,
+        joggingTotalTime,
       })
     }
     
@@ -139,10 +159,19 @@ const ModeSelectionPage = () => {
           orderDirection: 'desc',
         })
 
+        // 조깅 세션 로드
+        const joggingResult = await databaseService.getJoggingSessionsByUserId(user.id, {
+          limit: 50, // 최근 50개 조깅 세션
+          offset: 0,
+          orderBy: 'end_time',
+          orderDirection: 'desc',
+        })
+
         // databaseService.getExerciseSessionsByUserId는 이미 ExerciseSession 형식으로 변환된 데이터를 반환
         // 따라서 추가 변환 없이 그대로 사용
         console.log('📊 ModeSelectionPage 세션 로드:', {
           sessionsCount: result.sessions.length,
+          joggingSessionsCount: joggingResult.sessions.length,
           firstSession: result.sessions[0] ? {
             id: result.sessions[0].id,
             endTime: result.sessions[0].endTime,
@@ -164,8 +193,8 @@ const ModeSelectionPage = () => {
           setHasMoreSessions(result.hasMore)
           setSessionOffset(20) // 다음 로드를 위한 오프셋
 
-          // 1주일 데이터 계산
-          const weekData = calculateWeeklyData(uniqueSessions)
+          // 1주일 데이터 계산 (조깅 세션 포함)
+          const weekData = calculateWeeklyData(uniqueSessions, joggingResult.sessions)
           setWeeklyData(weekData)
 
           // 세션이 있으면 첫 번째 세션을 기본으로 설정
@@ -260,6 +289,25 @@ const ModeSelectionPage = () => {
   const getMaxCount = (): number => {
     if (weeklyData.length === 0) return 1
     return Math.max(...weeklyData.map(d => d.count), 1)
+  }
+
+  const getMaxJoggingCount = (): number => {
+    if (weeklyData.length === 0) return 1
+    const maxCount = Math.max(...weeklyData.map(d => d.joggingCount), 0)
+    return maxCount > 0 ? maxCount : 1
+  }
+
+  const formatDuration = (ms: number): string => {
+    if (!ms || isNaN(ms) || ms < 0) return '00:00'
+    const totalSeconds = Math.floor(ms / 1000)
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = totalSeconds % 60
+    if (hours > 0) {
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+    } else {
+      return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+    }
   }
 
   const maxCount = getMaxCount()
@@ -657,25 +705,31 @@ const ModeSelectionPage = () => {
             <div className="bg-gray-700/50 rounded-lg p-4">
               <div className="flex items-end justify-between gap-2 h-48">
                 {weeklyData.map((data, index) => {
-                  const height = maxCount > 0 ? (data.count / maxCount) * 100 : 0
+                  const maxExercise = getMaxCount()
+                  const maxJogging = getMaxJoggingCount()
+                  const exerciseHeight = maxExercise > 0 ? (data.count / maxExercise) * 100 : 0
+                  const joggingHeight = maxJogging > 0 ? (data.joggingCount / maxJogging) * 100 : 0
                   const date = new Date(data.date)
                   const dayLabel = date.toLocaleDateString('ko-KR', { weekday: 'short' })
                   const dayNum = date.getDate()
+                  const hasData = data.count > 0 || data.joggingCount > 0
                   
                   return (
                     <div key={index} className="flex-1 flex flex-col items-center gap-2">
-                      <div className="relative w-full h-40 flex items-end">
+                      <div className="relative w-full h-40 flex items-end gap-0.5">
+                        {/* 일반 운동 그래프 바 (blue) */}
+                        {data.count > 0 && (
                         <div
-                          className={`graph-bar w-full bg-gradient-to-t from-blue-500 to-blue-400 rounded-t transition-all ${
-                            data.count > 0
+                            className={`graph-bar flex-1 bg-gradient-to-t from-blue-500 to-blue-400 rounded-t transition-all ${
+                              hasData
                               ? 'cursor-pointer hover:from-blue-400 hover:to-blue-300 hover:ring-2 hover:ring-blue-300'
                               : 'cursor-default opacity-50'
                           } ${selectedDayIndex === index ? 'ring-2 ring-blue-300' : ''}`}
-                          style={{ height: `${height}%`, minHeight: data.count > 0 ? '4px' : '0' }}
-                          onClick={(e) => data.count > 0 && handleBarClick(index, e)}
-                          onMouseEnter={(e) => data.count > 0 && handleBarClick(index, e)}
+                            style={{ height: `${exerciseHeight}%`, minHeight: '4px' }}
+                            onClick={(e) => hasData && handleBarClick(index, e)}
+                            onMouseEnter={(e) => hasData && handleBarClick(index, e)}
                           onTouchStart={(e) => {
-                            if (data.count > 0) {
+                              if (hasData) {
                               const touch = e.touches[0]
                               const target = e.currentTarget
                               const fakeEvent = {
@@ -687,6 +741,36 @@ const ModeSelectionPage = () => {
                             }
                           }}
                         />
+                        )}
+                        {/* 조깅 그래프 바 (yellow) */}
+                        {data.joggingCount > 0 && (
+                          <div
+                            className={`graph-bar flex-1 bg-gradient-to-t from-yellow-500 to-yellow-400 rounded-t transition-all ${
+                              hasData
+                                ? 'cursor-pointer hover:from-yellow-400 hover:to-yellow-300 hover:ring-2 hover:ring-yellow-300'
+                                : 'cursor-default opacity-50'
+                            } ${selectedDayIndex === index ? 'ring-2 ring-yellow-300' : ''}`}
+                            style={{ height: `${joggingHeight}%`, minHeight: '4px' }}
+                            onClick={(e) => hasData && handleBarClick(index, e)}
+                            onMouseEnter={(e) => hasData && handleBarClick(index, e)}
+                            onTouchStart={(e) => {
+                              if (hasData) {
+                                const touch = e.touches[0]
+                                const target = e.currentTarget
+                                const fakeEvent = {
+                                  currentTarget: target,
+                                  clientX: touch.clientX,
+                                  clientY: touch.clientY,
+                                } as React.MouseEvent<HTMLDivElement>
+                                handleBarClick(index, fakeEvent)
+                              }
+                            }}
+                          />
+                        )}
+                        {/* 데이터가 없을 때 빈 공간 */}
+                        {!hasData && (
+                          <div className="flex-1 opacity-50" style={{ minHeight: '0' }} />
+                        )}
                       </div>
                       <div className="text-xs text-gray-400 text-center">
                         <div>{dayLabel}</div>
@@ -697,8 +781,8 @@ const ModeSelectionPage = () => {
                 })}
               </div>
               
-              {/* 오버레이 - 일일 종목별 내역 표시 */}
-              {selectedDayIndex !== null && overlayPosition && weeklyData[selectedDayIndex].count > 0 && (
+              {/* 오버레이 - 일일 종목별 내역 및 조깅 정보 표시 */}
+              {selectedDayIndex !== null && overlayPosition && (weeklyData[selectedDayIndex].count > 0 || weeklyData[selectedDayIndex].joggingCount > 0) && (
                 <div
                   className="graph-overlay fixed z-50 bg-gray-800/95 border border-gray-600 rounded-lg p-4 shadow-2xl min-w-[200px]"
                   style={{
@@ -708,6 +792,10 @@ const ModeSelectionPage = () => {
                   }}
                   onMouseLeave={handleCloseOverlay}
                 >
+                  <div className="space-y-3">
+                    {/* 일반 운동 내역 */}
+                    {weeklyData[selectedDayIndex].count > 0 && (
+                      <div>
                   <div className="text-center mb-2">
                     <div className="text-lg font-bold text-blue-400 mb-2">
                       일일 운동 내역
@@ -727,6 +815,22 @@ const ModeSelectionPage = () => {
                       ))
                     ) : (
                       <div className="text-sm text-gray-400">내역 없음</div>
+                    )}
+                  </div>
+                </div>
+              )}
+                    {/* 조깅 정보 */}
+                    {weeklyData[selectedDayIndex].joggingCount > 0 && (
+                      <div className={`text-center ${weeklyData[selectedDayIndex].count > 0 ? 'border-t border-gray-600 pt-3' : ''}`}>
+                        <div className="text-2xl font-bold text-yellow-400">
+                          {weeklyData[selectedDayIndex].joggingCount}회
+                        </div>
+                        <div className="text-sm text-gray-400 mt-1">조깅 횟수</div>
+                        <div className="text-lg font-semibold text-yellow-300 mt-2">
+                          {formatDuration(weeklyData[selectedDayIndex].joggingTotalTime)}
+                        </div>
+                        <div className="text-xs text-gray-400">총 시간</div>
+                      </div>
                     )}
                   </div>
                 </div>

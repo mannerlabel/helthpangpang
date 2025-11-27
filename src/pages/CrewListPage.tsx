@@ -18,8 +18,6 @@ const CrewListPage = () => {
   const [myCrews, setMyCrews] = useState<Crew[]>([])
   const [sortedCrews, setSortedCrews] = useState<Crew[]>([])
   const [sortBy, setSortBy] = useState<'created' | 'recommendations'>('created')
-  const [videoEnabled, setVideoEnabled] = useState(false)
-  const [audioEnabled, setAudioEnabled] = useState(false)
   const [hasRecommendedMap, setHasRecommendedMap] = useState<Record<string, boolean>>({})
   const [hasCancelledMap, setHasCancelledMap] = useState<Record<string, boolean>>({})
   const [creatorMap, setCreatorMap] = useState<Record<string, string>>({})
@@ -224,8 +222,8 @@ const CrewListPage = () => {
     // 크루 멤버 설정 초기화 (영상/음성 off로 시작)
     try {
       await databaseService.updateCrewMember(crew.id, user.id, {
-        videoEnabled: videoEnabled,
-        audioEnabled: audioEnabled,
+        videoEnabled: false,
+        audioEnabled: false,
       })
     } catch (error) {
       console.error('멤버 설정 업데이트 실패:', error)
@@ -237,8 +235,8 @@ const CrewListPage = () => {
         config: crew.exerciseConfig,
         alarm: crew.alarm,
         crewId: crew.id,
-        videoEnabled: videoEnabled,
-        audioEnabled: audioEnabled,
+        videoEnabled: false,
+        audioEnabled: false,
       },
     })
   }
@@ -396,37 +394,6 @@ const CrewListPage = () => {
           >
             추천수순
           </button>
-        </div>
-
-        {/* 영상/음성 토글 버튼 */}
-        <div className="bg-gray-800/90 rounded-2xl p-3 mb-6">
-          <div className="flex items-center justify-between">
-            <span className="text-white font-semibold text-sm">미디어공유</span>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setVideoEnabled(!videoEnabled)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold text-sm transition ${
-                  videoEnabled
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                }`}
-              >
-                <span>📹</span>
-                <span>영상 {videoEnabled ? 'ON' : 'OFF'}</span>
-              </button>
-              <button
-                onClick={() => setAudioEnabled(!audioEnabled)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold text-sm transition ${
-                  audioEnabled
-                    ? 'bg-green-500 text-white'
-                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                }`}
-              >
-                <span>🎤</span>
-                <span>음성 {audioEnabled ? 'ON' : 'OFF'}</span>
-              </button>
-            </div>
-          </div>
         </div>
 
         {sortedCrews.length === 0 ? (

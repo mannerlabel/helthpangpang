@@ -23,6 +23,8 @@ const HomePage = () => {
     totalCount: number
     bestScore: number
     worstScore: number
+    joggingCount: number
+    joggingTotalTime: number // 총 시간 (밀리초)
   }[]>([])
   const [currentSessionIndex, setCurrentSessionIndex] = useState(0) // 현재 표시할 세션 인덱스
   const [loading, setLoading] = useState(true)
@@ -40,12 +42,14 @@ const HomePage = () => {
   const [userRank, setUserRank] = useState(1)
   const [hasNewAnnouncement, setHasNewAnnouncement] = useState(false)
 
-  const calculateWeeklyData = (sessions: ExerciseSession[]): { 
+  const calculateWeeklyData = (sessions: ExerciseSession[], joggingSessions: any[] = []): { 
     date: string
     averageScore: number
     totalCount: number
     bestScore: number
     worstScore: number
+    joggingCount: number
+    joggingTotalTime: number
   }[] => {
     const today = new Date()
     const weekData: { 
@@ -54,6 +58,8 @@ const HomePage = () => {
       totalCount: number
       bestScore: number
       worstScore: number
+      joggingCount: number
+      joggingTotalTime: number
     }[] = []
     
     for (let i = 6; i >= 0; i--) {
@@ -61,25 +67,34 @@ const HomePage = () => {
       date.setDate(date.getDate() - i)
       const dateStr = date.toISOString().split('T')[0]
       
-      // 해당 날짜의 세션들 찾기
+      // 해당 날짜의 일반 운동 세션들 찾기
       const daySessions = sessions.filter(session => {
         if (!session.endTime && !session.startTime) return false
         const sessionDate = new Date(session.endTime || session.startTime || 0)
         return sessionDate.toISOString().split('T')[0] === dateStr
       })
       
-      if (daySessions.length === 0) {
+      // 해당 날짜의 조깅 세션들 찾기
+      const dayJoggingSessions = joggingSessions.filter(session => {
+        if (!session.endTime && !session.startTime) return false
+        const sessionDate = new Date(session.endTime || session.startTime || 0)
+        return sessionDate.toISOString().split('T')[0] === dateStr
+      })
+      
+      if (daySessions.length === 0 && dayJoggingSessions.length === 0) {
         weekData.push({
           date: dateStr,
           averageScore: 0,
           totalCount: 0,
           bestScore: 0,
           worstScore: 0,
+          joggingCount: 0,
+          joggingTotalTime: 0,
         })
         continue
       }
       
-      // 해당 날짜의 총 카운트 계산
+      // 해당 날짜의 총 카운트 계산 (일반 운동만)
       const totalCount = daySessions.reduce((sum, session) => {
         const sessionTotal = (session as any).totalCount || session.counts.length
         return sum + sessionTotal
@@ -105,12 +120,21 @@ const HomePage = () => {
         .filter((score): score is number => score !== undefined)
       const worstScore = worstScores.length > 0 ? Math.min(...worstScores) : 0
       
+      // 조깅 세션 수 및 총 시간 계산
+      const joggingCount = dayJoggingSessions.length
+      const joggingTotalTime = dayJoggingSessions.reduce((sum, session) => {
+        const sessionTime = session.averageTime || (session.endTime && session.startTime ? session.endTime - session.startTime : 0)
+        return sum + sessionTime
+      }, 0)
+      
       weekData.push({
         date: dateStr,
         averageScore: Math.round(averageScore * 10) / 10, // 소수점 첫째자리까지
         totalCount,
         bestScore,
         worstScore,
+        joggingCount,
+        joggingTotalTime,
       })
     }
     
@@ -254,9 +278,18 @@ const HomePage = () => {
           orderDirection: 'desc',
         })
         
+        // 조깅 세션 로드
+        const joggingResult = await databaseService.getJoggingSessionsByUserId(user.id, {
+          limit: 50, // 최근 50개 조깅 세션
+          offset: 0,
+          orderBy: 'end_time',
+          orderDirection: 'desc',
+        })
+        
         // 데이터 소스 확인 로그
         console.log('📊 HomePage 데이터 로드 완료:', {
           sessionsCount: result.sessions.length,
+          joggingSessionsCount: joggingResult.sessions.length,
           total: result.total,
           hasMore: result.hasMore,
           dataSource: '콘솔의 "📖 운동 세션 조회 시작" 로그를 확인하세요',
@@ -280,8 +313,8 @@ const HomePage = () => {
         setHasMoreSessions(result.hasMore)
         setSessionOffset(20) // 다음 로드를 위한 오프셋
 
-        // 1주일 데이터 계산
-        const weekData = calculateWeeklyData(convertedSessions)
+        // 1주일 데이터 계산 (조깅 세션 포함)
+        const weekData = calculateWeeklyData(convertedSessions, joggingResult.sessions)
         setWeeklyData(weekData)
 
         // 세션이 있으면 첫 번째 세션을 기본으로 설정
@@ -319,6 +352,19 @@ const HomePage = () => {
     if (!timestamp) return '-'
     const date = new Date(timestamp)
     return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+  }
+
+  const formatDuration = (ms: number): string => {
+    if (!ms || isNaN(ms) || ms < 0) return '00:00'
+    const totalSeconds = Math.floor(ms / 1000)
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = totalSeconds % 60
+    if (hours > 0) {
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+    } else {
+      return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+    }
   }
 
   const getMaxAverageScore = (): number => {
@@ -549,23 +595,53 @@ const HomePage = () => {
                 <div className="bg-gray-700/50 rounded-lg p-4">
                   <div className="flex items-end justify-between gap-2 h-48">
                     {weeklyData.map((data, index) => {
-                      const height = maxAverageScore > 0 ? (data.averageScore / maxAverageScore) * 100 : 0
+                      const maxScore = getMaxAverageScore()
+                      const maxJogging = getMaxJoggingCount()
+                      const exerciseHeight = maxScore > 0 ? (data.averageScore / maxScore) * 100 : 0
+                      const joggingHeight = maxJogging > 0 ? (data.joggingCount / maxJogging) * 100 : 0
                       const date = new Date(data.date)
                       const dayLabel = date.toLocaleDateString('ko-KR', { weekday: 'short' })
                       const dayNum = date.getDate()
                       const isSelected = selectedDayIndex === index
-                      const hasData = data.averageScore > 0 || data.totalCount > 0
+                      const hasData = data.averageScore > 0 || data.totalCount > 0 || data.joggingCount > 0
                       
                       return (
                         <div key={index} className="flex-1 flex flex-col items-center gap-2">
-                          <div className="relative w-full h-40 flex items-end">
+                          <div className="relative w-full h-40 flex items-end gap-0.5">
+                            {/* 일반 운동 그래프 바 (blue) */}
+                            {(data.averageScore > 0 || data.totalCount > 0) && (
                             <div
-                              className={`graph-bar w-full bg-gradient-to-t from-blue-500 to-blue-400 rounded-t transition-all ${
+                                className={`graph-bar flex-1 bg-gradient-to-t from-blue-500 to-blue-400 rounded-t transition-all ${
                                 hasData
                                   ? 'cursor-pointer hover:from-blue-400 hover:to-blue-300 hover:ring-2 hover:ring-blue-300 active:from-blue-300 active:to-blue-200' 
                                   : 'cursor-default opacity-50'
                               } ${isSelected ? 'ring-2 ring-blue-300' : ''}`}
-                              style={{ height: `${height}%`, minHeight: hasData ? '4px' : '0' }}
+                                style={{ height: `${exerciseHeight}%`, minHeight: '4px' }}
+                                onClick={(e) => hasData && handleBarClick(index, e)}
+                                onMouseEnter={(e) => hasData && handleBarClick(index, e)}
+                                onTouchStart={(e) => {
+                                  if (hasData) {
+                                    const touch = e.touches[0]
+                                    const target = e.currentTarget
+                                    const fakeEvent = {
+                                      currentTarget: target,
+                                      clientX: touch.clientX,
+                                      clientY: touch.clientY,
+                                    } as React.MouseEvent<HTMLDivElement>
+                                    handleBarClick(index, fakeEvent)
+                                  }
+                                }}
+                              />
+                            )}
+                            {/* 조깅 그래프 바 (yellow) */}
+                            {data.joggingCount > 0 && (
+                              <div
+                                className={`graph-bar flex-1 bg-gradient-to-t from-yellow-500 to-yellow-400 rounded-t transition-all ${
+                                  hasData
+                                    ? 'cursor-pointer hover:from-yellow-400 hover:to-yellow-300 hover:ring-2 hover:ring-yellow-300 active:from-yellow-300 active:to-yellow-200' 
+                                    : 'cursor-default opacity-50'
+                                } ${isSelected ? 'ring-2 ring-yellow-300' : ''}`}
+                                style={{ height: `${joggingHeight}%`, minHeight: '4px' }}
                               onClick={(e) => hasData && handleBarClick(index, e)}
                               onMouseEnter={(e) => hasData && handleBarClick(index, e)}
                               onTouchStart={(e) => {
@@ -581,6 +657,11 @@ const HomePage = () => {
                                 }
                               }}
                             />
+                            )}
+                            {/* 데이터가 없을 때 빈 공간 */}
+                            {!hasData && (
+                              <div className="flex-1 opacity-50" style={{ minHeight: '0' }} />
+                            )}
                           </div>
                           <div className="text-xs text-gray-400 text-center">
                             <div>{dayLabel}</div>
@@ -592,10 +673,10 @@ const HomePage = () => {
                   </div>
                 </div>
                 
-                {/* 오버레이 - 일일 운동 횟수만 표시 */}
-                {selectedDayIndex !== null && overlayPosition && weeklyData[selectedDayIndex].totalCount > 0 && (
+                {/* 오버레이 - 일일 운동 횟수 및 조깅 정보 표시 */}
+                {selectedDayIndex !== null && overlayPosition && (weeklyData[selectedDayIndex].totalCount > 0 || weeklyData[selectedDayIndex].joggingCount > 0) && (
                   <div
-                    className="graph-overlay fixed z-50 bg-gray-800/95 border border-gray-600 rounded-lg p-4 shadow-2xl min-w-[150px]"
+                    className="graph-overlay fixed z-50 bg-gray-800/95 border border-gray-600 rounded-lg p-4 shadow-2xl min-w-[200px]"
                     style={{
                       left: `${overlayPosition.x}px`,
                       top: `${overlayPosition.y}px`,
@@ -603,11 +684,29 @@ const HomePage = () => {
                     }}
                     onMouseLeave={handleCloseOverlay}
                   >
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-blue-400">
+                    <div className="space-y-3">
+                      {/* 일반 운동 정보 */}
+                      {weeklyData[selectedDayIndex].totalCount > 0 && (
+                        <div className="text-center border-b border-gray-600 pb-2">
+                          <div className="text-2xl font-bold text-blue-400">
                         {weeklyData[selectedDayIndex].totalCount}회
                       </div>
                       <div className="text-sm text-gray-400 mt-1">일일 운동 횟수</div>
+                        </div>
+                      )}
+                      {/* 조깅 정보 */}
+                      {weeklyData[selectedDayIndex].joggingCount > 0 && (
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-yellow-400">
+                            {weeklyData[selectedDayIndex].joggingCount}회
+                          </div>
+                          <div className="text-sm text-gray-400 mt-1">조깅 횟수</div>
+                          <div className="text-lg font-semibold text-yellow-300 mt-2">
+                            {formatDuration(weeklyData[selectedDayIndex].joggingTotalTime)}
+                          </div>
+                          <div className="text-xs text-gray-400">총 시간</div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

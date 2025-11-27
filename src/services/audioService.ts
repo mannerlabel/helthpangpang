@@ -87,7 +87,12 @@ class AudioService {
         console.log('✅ 음성 출력 완료:', text)
       }
       utterance.onerror = (event) => {
-        console.error('❌ 음성 출력 오류:', event.error, text)
+        // interrupted 에러는 정상적인 동작 (이전 음성을 취소하고 새 음성을 재생하기 때문)
+        if (event.error === 'interrupted') {
+          console.log('ℹ️ 음성 출력 중단됨 (정상):', text)
+        } else {
+          console.error('❌ 음성 출력 오류:', event.error, text)
+        }
       }
       
       // 음성 타입 설정 (더 정확한 매칭)

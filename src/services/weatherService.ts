@@ -4,7 +4,6 @@
  */
 
 import { WeatherInfo } from '@/types'
-import { adminService } from './adminService'
 
 interface WeatherAPIResponse {
   current: {
@@ -87,11 +86,11 @@ async function getAirKoreaData(_cityName: string): Promise<AirKoreaData | null> 
     const today = new Date()
     const searchDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
     
-    // PM10, PM25, O3 데이터를 각각 가져오기
+    // PM10, PM25, O3 데이터를 각각 가져오기 (HTTPS 사용)
     const [pm10Response, pm25Response, o3Response] = await Promise.all([
-      fetch(`http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth?serviceKey=${encodeURIComponent(API_KEY)}&returnType=json&numOfRows=100&pageNo=1&searchDate=${searchDate}&InformCode=PM10`),
-      fetch(`http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth?serviceKey=${encodeURIComponent(API_KEY)}&returnType=json&numOfRows=100&pageNo=1&searchDate=${searchDate}&InformCode=PM25`),
-      fetch(`http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth?serviceKey=${encodeURIComponent(API_KEY)}&returnType=json&numOfRows=100&pageNo=1&searchDate=${searchDate}&InformCode=O3`)
+      fetch(`https://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth?serviceKey=${encodeURIComponent(API_KEY)}&returnType=json&numOfRows=100&pageNo=1&searchDate=${searchDate}&InformCode=PM10`),
+      fetch(`https://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth?serviceKey=${encodeURIComponent(API_KEY)}&returnType=json&numOfRows=100&pageNo=1&searchDate=${searchDate}&InformCode=PM25`),
+      fetch(`https://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMinuDustFrcstDspth?serviceKey=${encodeURIComponent(API_KEY)}&returnType=json&numOfRows=100&pageNo=1&searchDate=${searchDate}&InformCode=O3`)
     ])
     
     let pm10: number | null = null
@@ -303,21 +302,19 @@ async function fetchWeatherData(lat: number, lon: number, cityName: string): Pro
     // ============================================
     // 실제 API 호출 코드 (환경 변수 우선, DB 폴백)
     // ============================================
-    let API_KEY: string | null = null
+    // C:/env/.env 파일에서만 API Key 가져오기 (vite.config.ts에서 로드됨)
+    const API_KEY = import.meta.env.VITE_WEATHER_API_KEY || ''
     
-    // 1. 환경 변수에서 API Key 가져오기 (우선순위)
-    API_KEY = import.meta.env.VITE_WEATHER_API_KEY || ''
+    // 디버깅: API 키 로드 상태 확인
+    console.log('🔍 날씨 API 키 로드 상태:', {
+      hasKey: !!API_KEY,
+      keyLength: API_KEY.length,
+      keyPrefix: API_KEY ? `${API_KEY.substring(0, 8)}...` : '없음',
+      envVar: 'VITE_WEATHER_API_KEY',
+      note: 'C:/env/.env 파일에서 로드됨 (vite.config.ts)'
+    })
     
-    // 2. 환경 변수에 없으면 DB에서 가져오기
-    if (!API_KEY) {
-      try {
-        API_KEY = await adminService.getApiKey('weather')
-      } catch (error) {
-        console.warn('⚠️ DB에서 Weather API Key 가져오기 실패:', error)
-      }
-    }
-    
-    if (API_KEY && API_KEY !== 'YOUR_API_KEY') {
+    if (API_KEY && API_KEY !== 'YOUR_API_KEY' && API_KEY !== 'your_weather_api_key' && API_KEY.trim() !== '') {
       try {
         // GPS 좌표를 직접 사용 (이미 getWeatherInfo에서 확인된 좌표)
         console.log(`📍 날씨 API 호출: ${cityName} (위도: ${lat}, 경도: ${lon})`)
@@ -560,6 +557,8 @@ async function fetchWeatherData(lat: number, lon: number, cityName: string): Pro
       }
     } else {
       console.warn('⚠️ 날씨 API 키가 설정되지 않았습니다.')
+      console.warn('   C:/env/.env 파일에 VITE_WEATHER_API_KEY를 설정하고 개발 서버를 재시작해주세요.')
+      console.warn('   현재 로드된 값:', import.meta.env.VITE_WEATHER_API_KEY || '(없음)')
       // API 키가 없으면 빈 배열 반환
       return []
     }

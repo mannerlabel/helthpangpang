@@ -5,6 +5,7 @@ import { adminService } from '@/services/adminService'
 
 interface NavigationButtonsProps {
   onBack?: () => void
+  onHome?: () => void // 홈 버튼 클릭 핸들러
   backPath?: string
   showHome?: boolean
   showBack?: boolean // 뒤로가기 버튼 표시 여부
@@ -14,7 +15,8 @@ interface NavigationButtonsProps {
 }
 
 const NavigationButtons = ({ 
-  onBack, 
+  onBack,
+  onHome,
   backPath, 
   showHome = true,
   showBack = true,
@@ -35,11 +37,15 @@ const NavigationButtons = ({
   }
 
   const handleHome = () => {
-    const user = authService.getCurrentUser()
-    if (user && adminService.isAdmin(user)) {
-      navigate('/admin/dashboard')
+    if (onHome) {
+      onHome()
     } else {
-      navigate('/mode-select')
+      const user = authService.getCurrentUser()
+      if (user && adminService.isAdmin(user)) {
+        navigate('/admin/dashboard')
+      } else {
+        navigate('/mode-select')
+      }
     }
   }
 

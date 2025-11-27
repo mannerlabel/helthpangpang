@@ -36,6 +36,9 @@ interface CrewMeetingViewProps {
   onEntryMessage?: (message: string) => void // 입장 메시지 콜백 (데이터베이스에 저장하지 않음)
   crewType?: 'crew' | 'jogging' // 크루 타입 (기본값: 'crew')
   sharedVideoStream?: MediaStream | null // 공유 비디오 스트림 (자세 측정용 카메라 스트림)
+  videoShareEnabled?: boolean // 크루 영상 공유 설정 (기본값: true)
+  audioShareEnabled?: boolean // 크루 음성 공유 설정 (기본값: true)
+  onParticipantsChange?: () => void // 참여자 목록 변경 콜백 (조깅 크루의 실시간 경로 갱신용)
 }
 
 const CrewMeetingView = ({
@@ -51,6 +54,9 @@ const CrewMeetingView = ({
   onEntryMessage,
   crewType = 'crew',
   sharedVideoStream,
+  videoShareEnabled = true,
+  audioShareEnabled = true,
+  onParticipantsChange,
 }: CrewMeetingViewProps) => {
   const [participants, setParticipants] = useState<Participant[]>([])
   const [myVideoStream, setMyVideoStream] = useState<MediaStream | null>(null)
@@ -182,15 +188,28 @@ const CrewMeetingView = ({
             console.log(`📡 Signaling 채널 구독 시도 중... (${subscribeAttempts}/${maxSubscribeAttempts})`, crewId)
             await signalingService.subscribe(crewId)
             
-            // 구독 성공 확인 (약간의 지연 후 확인)
-            await new Promise(resolve => setTimeout(resolve, 500))
-            if (signalingService.isSubscribed(crewId)) {
+            // 구독 성공 확인
+            // subscribe() Promise가 resolve되면 채널이 이미 등록되어 있어야 함
+            // 하지만 채널 상태가 'joined'가 되기까지 약간의 시간이 필요할 수 있음
+            // subscribe()가 성공적으로 완료되었으므로, 채널이 등록되었는지 확인
+            await new Promise(resolve => setTimeout(resolve, 1000)) // 1초 대기 (채널 등록 및 상태 업데이트 대기)
+            
+            const isSubscribed = signalingService.isSubscribed(crewId)
+            console.log(`🔍 채널 구독 확인: ${crewId}`, { 
+              isSubscribed,
+              subscribeAttempt: subscribeAttempts,
+              maxAttempts: maxSubscribeAttempts 
+            })
+            
+            if (isSubscribed) {
               console.log('✅ Signaling 채널 구독 성공:', crewId)
               subscribeSuccess = true
             } else {
               console.warn(`⚠️ 채널 구독 후 확인 실패 (${subscribeAttempts}/${maxSubscribeAttempts}), 재시도 중...`)
+              console.warn('   subscribe()는 성공했지만 채널이 등록되지 않았습니다.')
+              console.warn('   Supabase Realtime 연결 상태를 확인해주세요.')
               if (subscribeAttempts < maxSubscribeAttempts) {
-                await new Promise(resolve => setTimeout(resolve, 1000)) // 1초 대기 후 재시도
+                await new Promise(resolve => setTimeout(resolve, 2000)) // 2초 대기 후 재시도
               }
             }
           } catch (subscribeError) {
@@ -515,29 +534,38 @@ const CrewMeetingView = ({
       }
     } else {
       // 이미 공유 스트림을 사용 중이면 오디오만 확인
+      if (!myVideoStream) {
+        console.warn('⚠️ myVideoStream이 null입니다. 스트림을 먼저 획득해야 합니다.')
+        return
+      }
+      
       const hasAudio = myVideoStream.getAudioTracks().length > 0
       if (hasAudio !== myAudioEnabled) {
         if (myAudioEnabled) {
           // 오디오 추가
           navigator.mediaDevices.getUserMedia({ audio: true })
             .then(audioStream => {
-              audioStream.getAudioTracks().forEach(track => {
-                myVideoStream.addTrack(track)
-              })
-              webrtcService.setLocalStream(myVideoStream)
-              console.log('✅ 오디오 추가 완료')
+              if (myVideoStream) {
+                audioStream.getAudioTracks().forEach(track => {
+                  myVideoStream.addTrack(track)
+                })
+                webrtcService.setLocalStream(myVideoStream)
+                console.log('✅ 오디오 추가 완료')
+              }
             })
             .catch(error => {
               console.warn('⚠️ 오디오 추가 실패:', error)
             })
         } else {
           // 오디오 제거
-          myVideoStream.getAudioTracks().forEach(track => {
-            track.stop()
-            myVideoStream.removeTrack(track)
-          })
-          webrtcService.setLocalStream(myVideoStream)
-          console.log('✅ 오디오 제거 완료')
+          if (myVideoStream) {
+            myVideoStream.getAudioTracks().forEach(track => {
+              track.stop()
+              myVideoStream.removeTrack(track)
+            })
+            webrtcService.setLocalStream(myVideoStream)
+            console.log('✅ 오디오 제거 완료')
+          }
         }
       }
     }
@@ -1076,24 +1104,43 @@ const CrewMeetingView = ({
 
       let members: CrewMember[] = []
       
-      // 조깅 크루인 경우 다른 방식으로 멤버 로드
+      // 조깅 크루인 경우: crew_members 테이블과 memberIds 모두 확인
       if (crewType === 'jogging') {
         try {
+          // 먼저 crew_members 테이블에서 멤버 로드 (영상/음성 상태 포함)
+          const crewMembers = await databaseService.getCrewMembers(crewId)
+          console.log('📋 조깅 크루: crew_members에서 로드한 멤버:', crewMembers.length, crewMembers.map(m => ({ userId: m.userId, videoEnabled: m.videoEnabled, audioEnabled: m.audioEnabled })))
+          
+          // memberIds도 확인하여 누락된 멤버 추가
           const joggingCrew = await databaseService.getJoggingCrewById(crewId)
           if (joggingCrew && joggingCrew.memberIds) {
-            // memberIds를 사용하여 CrewMember 형태로 변환
-            members = joggingCrew.memberIds.map((memberId, index) => ({
-              id: `jogging_member_${memberId}_${index}`,
-              crewId: crewId,
-              userId: memberId,
-              role: 'member' as const,
-              videoEnabled: false,
-              audioEnabled: false,
-              joinedAt: joggingCrew.createdAt,
-            }))
+            const existingMemberIds = new Set(crewMembers.map(m => m.userId))
+            
+            // memberIds에 있지만 crew_members에 없는 멤버 추가
+            for (const memberId of joggingCrew.memberIds) {
+              if (!existingMemberIds.has(memberId)) {
+                crewMembers.push({
+                  id: `jogging_member_${memberId}_${Date.now()}`,
+                  crewId: crewId,
+                  userId: memberId,
+                  role: 'member' as const,
+                  videoEnabled: false,
+                  audioEnabled: false,
+                  joinedAt: joggingCrew.createdAt,
+                })
+                console.log('📝 조깅 크루: 누락된 멤버 추가:', memberId)
+              }
+            }
+            
+            members = crewMembers
+            console.log('📋 조깅 크루: 최종 멤버 목록:', members.length, members.map(m => ({ userId: m.userId, videoEnabled: m.videoEnabled, audioEnabled: m.audioEnabled })))
+          } else {
+            members = crewMembers
           }
         } catch (error) {
           console.error('조깅 크루 멤버 로드 실패:', error)
+          // 에러 발생 시 빈 배열로 초기화
+          members = []
         }
       } else {
         members = await databaseService.getCrewMembers(crewId)
@@ -1111,9 +1158,43 @@ const CrewMeetingView = ({
       
       // 활성 사용자 ID 수집 (localStorage + Supabase)
       const activeUserIds = new Set<string>()
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
       
-      // 현재 사용자는 항상 활성으로 간주
+      // 현재 사용자는 항상 활성으로 간주 (localStorage ID와 UUID 모두 추가)
       activeUserIds.add(user.id)
+      
+      // 현재 사용자의 UUID도 추가 (조깅 크루의 경우 memberIds가 UUID이므로)
+      if (!uuidRegex.test(user.id)) {
+        // localStorage ID인 경우, UUID로 변환하여 추가
+        try {
+          const { supabase } = await import('@/services/supabaseClient')
+          if (supabase) {
+            const userStr = localStorage.getItem(`user_${user.id}`)
+            if (userStr) {
+              const userData = JSON.parse(userStr)
+              if (userData.email) {
+                const { data: supabaseUser } = await supabase
+                  .from('users')
+                  .select('id')
+                  .eq('email', userData.email)
+                  .single()
+                
+                if (supabaseUser) {
+                  activeUserIds.add(supabaseUser.id)
+                  currentUserUuidRef.current = supabaseUser.id
+                  console.log('✅ 현재 사용자 UUID 추가:', user.id, '->', supabaseUser.id)
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error('현재 사용자 UUID 변환 실패:', e)
+        }
+      } else {
+        // 이미 UUID인 경우
+        currentUserUuidRef.current = user.id
+        console.log('✅ 현재 사용자는 이미 UUID:', user.id)
+      }
       
       // localStorage에서 현재 활성 세션 확인 (같은 브라우저/탭)
       try {
@@ -1123,6 +1204,7 @@ const CrewMeetingView = ({
           sessions.forEach((session: { userId: string; crewId: string }) => {
             if (session.crewId === crewId) {
               activeUserIds.add(session.userId)
+              console.log('✅ localStorage 세션에서 활성 사용자 추가:', session.userId)
             }
           })
         }
@@ -1217,8 +1299,58 @@ const CrewMeetingView = ({
           console.error('Supabase 활성 사용자 조회 실패:', e)
         }
       } else {
-        // 조깅 크루의 경우 localStorage 세션만 사용 (jogging_crew_members 테이블이 없음)
-        console.log('조깅 크루: localStorage 세션만 사용하여 활성 사용자 확인')
+        // 조깅 크루의 경우: realtime_jogging_routes 테이블에서 활성 참여자 확인
+        console.log('🏃 조깅 크루: realtime_jogging_routes 테이블에서 활성 참여자 확인')
+        
+        try {
+          const { databaseService } = await import('@/services/databaseService')
+          // realtime_jogging_routes 테이블에서 활성(is_active=true) 참여자 조회
+          const activeRoutes = await databaseService.getRealtimeJoggingRoutesByCrew(crewId)
+          console.log('🏃 조깅 크루: realtime_jogging_routes에서 조회한 활성 참여자:', activeRoutes.length, activeRoutes.map(r => ({ userId: r.userId, userName: r.userName, isActive: r.isActive })))
+          
+          // 활성 참여자의 userId를 activeUserIds에 추가
+          for (const route of activeRoutes) {
+            if (route.isActive) {
+              activeUserIds.add(route.userId)
+              console.log('✅ 조깅 크루: 활성 참여자 추가 (realtime_jogging_routes):', route.userId, route.userName)
+            }
+          }
+          
+          // localStorage의 active_training_sessions에서도 확인 (백업)
+          const activeLocalStorageIds = Array.from(activeUserIds).filter(id => !uuidRegex.test(id))
+          if (activeLocalStorageIds.length > 0) {
+            console.log('🔍 조깅 크루: localStorage ID를 UUID로 변환할 목록:', activeLocalStorageIds)
+            const { supabase } = await import('@/services/supabaseClient')
+            if (supabase) {
+              for (const localStorageId of activeLocalStorageIds) {
+                try {
+                  const userStr = localStorage.getItem(`user_${localStorageId}`)
+                  if (userStr) {
+                    const userData = JSON.parse(userStr)
+                    if (userData.email) {
+                      const { data: supabaseUser } = await supabase
+                        .from('users')
+                        .select('id')
+                        .eq('email', userData.email)
+                        .single()
+                      
+                      if (supabaseUser) {
+                        activeUserIds.add(supabaseUser.id)
+                        console.log('✅ 조깅 크루: localStorage ID -> UUID 매핑:', localStorageId, '->', supabaseUser.id)
+                      }
+                    }
+                  }
+                } catch (e) {
+                  console.error('조깅 크루 사용자 매핑 실패:', localStorageId, e)
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error('❌ 조깅 크루: realtime_jogging_routes 조회 실패:', e)
+          // 실패 시 localStorage 세션만 사용
+          console.log('⚠️ 조깅 크루: localStorage 세션만 사용하여 활성 사용자 확인 (fallback)')
+        }
       }
       
       console.log('활성 사용자 ID 목록 (Supabase 조회 후):', Array.from(activeUserIds))
@@ -1233,7 +1365,6 @@ const CrewMeetingView = ({
 
       // 새로 입장한 사용자 확인 및 입장 메시지 전송
       // UUID만 비교하여 중복 방지 (localStorage ID는 제외)
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
       const activeUuids = Array.from(activeUserIds).filter(id => uuidRegex.test(id)).sort()
       const previousActiveUuids = Array.from(previousActiveUserIdsRef.current).filter(id => uuidRegex.test(id)).sort()
       
@@ -1374,13 +1505,12 @@ const CrewMeetingView = ({
           let isActive = false
           
           // 활성 상태 확인 로직 개선
-          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
           const isMemberUUID = uuidRegex.test(member.userId)
           
-          // 1. 직접 비교 (현재 사용자)
-          if (member.userId === user.id) {
+          // 1. 직접 비교 (현재 사용자) - localStorage ID와 UUID 모두 확인
+          if (member.userId === user.id || member.userId === currentUserUuidRef.current) {
             isActive = true
-            console.log('✅ 활성 사용자 (직접 비교):', member.userId, memberUser.name)
+            console.log('✅ 활성 사용자 (현재 사용자):', member.userId, memberUser.name)
           } 
           // 2. activeUserIds에 직접 포함되어 있는지 확인 (UUID 또는 localStorage ID)
           else if (activeUserIds.has(member.userId)) {
@@ -1418,6 +1548,12 @@ const CrewMeetingView = ({
                       }
                     }
                   }
+                  
+                  // 조깅 크루의 경우: 현재 사용자의 UUID와도 비교
+                  if (!isActive && currentUserUuidRef.current && member.userId === currentUserUuidRef.current) {
+                    isActive = true
+                    console.log('✅ 활성 사용자 (현재 사용자 UUID 매칭):', member.userId, memberUser.name)
+                  }
                 }
               }
             } catch (e) {
@@ -1437,7 +1573,17 @@ const CrewMeetingView = ({
           }
           
           // 현재 사용자인 경우 myVideoEnabled, myAudioEnabled 사용
-          const isCurrentUser = member.userId === user.id
+          // 현재 사용자 확인: localStorage ID, UUID, 또는 currentUserUuidRef 모두 확인
+          const isCurrentUser = member.userId === user.id || 
+            member.userId === currentUserUuidRef.current ||
+            (currentUserUuidRef.current && member.userId === currentUserUuidRef.current)
+          
+          // 현재 사용자는 항상 활성으로 표시
+          if (isCurrentUser) {
+            isActive = true
+            console.log('✅ 현재 사용자 강제 활성화:', member.userId, memberUser.name)
+          }
+          
           participantList.push({
             id: member.id,
             userId: member.userId,
@@ -1472,6 +1618,12 @@ const CrewMeetingView = ({
         isActive: p.status !== 'inactive' 
       })))
       setParticipants(participantList)
+
+      // 참여자 목록이 변경되었을 때 콜백 호출 (조깅 크루의 실시간 경로 갱신용)
+      if (onParticipantsChange && crewType === 'jogging') {
+        console.log('🔄 참여자 목록 변경 감지: 실시간 경로 갱신 트리거')
+        onParticipantsChange()
+      }
 
       // 활성 참여자와 WebRTC 연결 시작 (참여자 섹션이 펼쳐진 경우에만)
       const currentUser = authService.getCurrentUser()
@@ -1695,7 +1847,7 @@ const CrewMeetingView = ({
   useEffect(() => {
     if (!crewId) return
     
-    console.log('📋 loadParticipants 호출 시작', { crewId, myVideoEnabled, isExpanded })
+    console.log('📋 loadParticipants 호출 시작', { crewId, myVideoEnabled, isExpanded, myStatus })
     
     // 초기 로드
     loadParticipants()
@@ -1710,6 +1862,22 @@ const CrewMeetingView = ({
     
     return () => clearInterval(interval)
   }, [crewId, loadParticipants, isExpanded]) // isExpanded가 변경되면 재실행
+
+  // myStatus가 'active'로 변경될 때 참여자 목록 새로고침 (조깅 시작 시)
+  useEffect(() => {
+    if (!crewId) return
+    
+    // myStatus가 'active'로 변경되면 참여자 목록을 즉시 새로고침
+    if (myStatus === 'active') {
+      console.log('🏃 조깅 시작 감지: 참여자 목록 새로고침', { crewId, myStatus })
+      // 약간의 지연 후 호출 (WebRTC 초기화 완료 대기)
+      const timer = setTimeout(() => {
+        loadParticipants()
+      }, 1000) // 1초 후 참여자 목록 새로고침
+      
+      return () => clearTimeout(timer)
+    }
+  }, [myStatus, crewId, loadParticipants]) // myStatus가 변경될 때 실행
 
   const getStatusText = (status: string, score?: number) => {
     if (status === 'inactive') {
@@ -1824,26 +1992,34 @@ const CrewMeetingView = ({
       <div className="p-4 h-full flex flex-col">
         <div className="flex items-center justify-between mb-4 flex-shrink-0">
           <h3 className="text-white font-semibold">
-            참여자 ({activeCount}/{participants.length}명)
+            {isExpanded ? `참여자 (${activeCount}/${participants.length}명)` : `참여자 (${activeCount}/${participants.length}명)`}
           </h3>
         <div className="flex gap-2 items-center">
           <button
             onClick={() => onVideoToggle(!myVideoEnabled)}
+            disabled={!videoShareEnabled}
             className={`px-3 py-2 rounded-lg font-semibold text-sm transition ${
-              myVideoEnabled
+              !videoShareEnabled
+                ? 'bg-gray-800 text-gray-500 cursor-not-allowed opacity-50'
+                : myVideoEnabled
                 ? 'bg-blue-500 text-white'
                 : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             }`}
+            title={!videoShareEnabled ? '이 크루에서는 영상 공유가 비활성화되어 있습니다' : ''}
           >
             📹 {myVideoEnabled ? 'ON' : 'OFF'}
           </button>
           <button
             onClick={() => onAudioToggle(!myAudioEnabled)}
+            disabled={!audioShareEnabled}
             className={`px-3 py-2 rounded-lg font-semibold text-sm transition ${
-              myAudioEnabled
+              !audioShareEnabled
+                ? 'bg-gray-800 text-gray-500 cursor-not-allowed opacity-50'
+                : myAudioEnabled
                 ? 'bg-green-500 text-white'
                 : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             }`}
+            title={!audioShareEnabled ? '이 크루에서는 음성 공유가 비활성화되어 있습니다' : ''}
           >
             🎤 {myAudioEnabled ? 'ON' : 'OFF'}
           </button>

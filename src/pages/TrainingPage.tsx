@@ -117,6 +117,8 @@ const TrainingPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // 마운트 시 한 번만 실행
   const [chatOpen, setChatOpen] = useState(false)
+  const [crewVideoShareEnabled, setCrewVideoShareEnabled] = useState(true) // 크루 영상 공유 설정
+  const [crewAudioShareEnabled, setCrewAudioShareEnabled] = useState(true) // 크루 음성 공유 설정
   const [meetingViewHeight, setMeetingViewHeight] = useState(120) // 바텀시트 높이
   const [isCompleted, setIsCompleted] = useState(false)
   const [entryMessage, setEntryMessage] = useState<string | null>(null) // 입장 메시지 (데이터베이스에 저장하지 않음)
@@ -306,6 +308,13 @@ const TrainingPage = () => {
           const crew = await databaseService.getCrewById(crewId)
           if (crew) {
             setRecommendations(crew.recommendations || 0)
+            // 크루 설정에서 영상/음성 공유 설정 가져오기
+            setCrewVideoShareEnabled(crew.videoShareEnabled ?? true)
+            setCrewAudioShareEnabled(crew.audioShareEnabled ?? true)
+            console.log('✅ 크루 설정 로드:', {
+              videoShareEnabled: crew.videoShareEnabled,
+              audioShareEnabled: crew.audioShareEnabled,
+            })
           }
 
           const hasRec = await databaseService.hasUserRecommendedCrew(crewId, user.id)
@@ -1601,6 +1610,8 @@ const TrainingPage = () => {
             onHeightChange={setMeetingViewHeight}
             onEntryMessage={setEntryMessage}
             sharedVideoStream={cameraState.stream} // 카메라 스트림 공유 (성능 최적화)
+            videoShareEnabled={crewVideoShareEnabled}
+            audioShareEnabled={crewAudioShareEnabled}
           />
         </div>
       )}
