@@ -96,6 +96,13 @@ class WebRTCService {
       // 참고: 각 PeerConnection마다 이 수만큼의 ICE candidate를 미리 수집함
       iceCandidatePoolSize: 0, // 0으로 설정하면 필요할 때만 수집 (기본값)
     }
+    
+    // STUN 서버 상태 확인 로그
+    safeLog('🌐 WebRTC STUN 서버 설정:', {
+      iceServersCount: this.config.iceServers.length,
+      iceServers: this.config.iceServers.map(s => s.urls),
+      iceCandidatePoolSize: this.config.iceCandidatePoolSize,
+    })
   }
 
   /**

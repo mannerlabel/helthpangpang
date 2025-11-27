@@ -11,6 +11,7 @@ import { authService } from '@/services/authService'
 import { databaseService } from '@/services/databaseService'
 import { adminService } from '@/services/adminService'
 import { rankService } from '@/services/rankService'
+import { announcementService } from '@/services/announcementService'
 import RankBadge from '@/components/RankBadge'
 
 const ModeSelectionPage = () => {
@@ -43,6 +44,7 @@ const ModeSelectionPage = () => {
   // 그래프 오버레이 관련 상태
   const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null)
   const [overlayPosition, setOverlayPosition] = useState<{ x: number; y: number } | null>(null)
+  const [hasNewAnnouncement, setHasNewAnnouncement] = useState(false)
 
   const calculateWeeklyData = (sessions: ExerciseSession[]): { 
     date: string
@@ -185,6 +187,49 @@ const ModeSelectionPage = () => {
     // cleanup 함수: 컴포넌트 언마운트 시 플래그 설정
     return () => {
       isMounted = false
+    }
+  }, [])
+
+  // 1주일 이내 미확인 공지사항 확인
+  useEffect(() => {
+    const checkNewAnnouncements = async () => {
+      try {
+        console.log('📢 ModeSelectionPage: 공지사항 확인 시작...')
+        const hasNew = await announcementService.hasUnreadAnnouncementsWithinWeek()
+        console.log('📢 ModeSelectionPage: 공지사항 확인 결과:', hasNew)
+        setHasNewAnnouncement(hasNew)
+      } catch (error) {
+        console.error('❌ ModeSelectionPage: 공지사항 확인 실패:', error)
+        setHasNewAnnouncement(false)
+      }
+    }
+
+    // 초기 확인
+    checkNewAnnouncements()
+
+    // 30초마다 확인 (주기적 업데이트)
+    const interval = setInterval(checkNewAnnouncements, 30000)
+
+    // 공지사항을 읽었을 때 즉시 상태 재확인
+    const handleAnnouncementRead = () => {
+      console.log('📢 ModeSelectionPage: 공지사항 읽음 이벤트 수신, 상태 재확인 중...')
+      // 약간의 지연 후 확인 (데이터베이스 업데이트 반영 시간)
+      setTimeout(checkNewAnnouncements, 500)
+    }
+    
+    // 페이지가 포커스를 받을 때도 상태 재확인 (다른 탭에서 돌아왔을 때)
+    const handleFocus = () => {
+      console.log('📢 ModeSelectionPage: 페이지 포커스, 공지사항 상태 재확인 중...')
+      checkNewAnnouncements()
+    }
+    
+    window.addEventListener('announcement-read', handleAnnouncementRead)
+    window.addEventListener('focus', handleFocus)
+
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('announcement-read', handleAnnouncementRead)
+      window.removeEventListener('focus', handleFocus)
     }
   }, [])
 
@@ -574,14 +619,34 @@ const ModeSelectionPage = () => {
           <motion.div
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            onClick={() => navigate('/announcements')}
-            className="bg-gradient-to-br from-yellow-500 to-yellow-700 rounded-2xl p-8 cursor-pointer shadow-2xl hover:shadow-3xl transition-all"
+            onClick={() => {
+              console.log('📢 ModeSelectionPage: 공지사항 카드 클릭됨, hasNewAnnouncement:', hasNewAnnouncement)
+              navigate('/announcements')
+            }}
+            className="relative bg-gradient-to-br from-yellow-500 to-yellow-700 rounded-2xl p-8 cursor-pointer shadow-2xl hover:shadow-3xl transition-all"
           >
             <div className="text-6xl mb-4 text-center">📢</div>
             <h2 className="text-3xl font-bold text-white mb-4 text-center">
               공지사항
             </h2>
             <p className="text-white/90 text-center">중요한 공지사항을 확인하세요</p>
+            {hasNewAnnouncement && (
+              <motion.span
+                initial={{ scale: 0 }}
+                animate={{ 
+                  scale: [1, 1.2, 1],
+                  opacity: [1, 0.7, 1],
+                }}
+                transition={{
+                  duration: 1.5,
+                  repeat: Infinity,
+                  repeatDelay: 0.5,
+                }}
+                className="absolute top-4 right-4 bg-red-500 text-white text-xs font-bold px-3 py-1 rounded-full z-10 whitespace-nowrap shadow-lg"
+              >
+                New
+              </motion.span>
+            )}
           </motion.div>
         </div>
 

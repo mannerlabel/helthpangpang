@@ -82,6 +82,10 @@ const AnnouncementsPage = () => {
       if (selectedAnnouncement && selectedAnnouncement.id === announcementId) {
         setSelectedAnnouncement(prev => prev ? { ...prev, isRead: true, readAt: Date.now() } : null)
       }
+      
+      // 읽음 처리 후 즉시 상태 재확인을 위해 커스텀 이벤트 발생
+      // 다른 페이지(HomePage, ModeSelectionPage)에서 이 이벤트를 듣고 상태를 업데이트
+      window.dispatchEvent(new CustomEvent('announcement-read', { detail: { announcementId } }))
     } else {
       alert(`읽음 처리 실패: ${result.error}`)
     }
@@ -96,7 +100,15 @@ const AnnouncementsPage = () => {
   }
 
   return (
-    <div className="min-h-screen p-8 relative">
+    <div 
+      className="min-h-screen min-h-[100dvh] p-8 relative"
+      style={{ 
+        WebkitOverflowScrolling: 'touch',
+        touchAction: 'pan-y',
+        overflowY: 'auto',
+        height: '100%',
+      }}
+    >
       <AnimatedBackground />
       <div className="max-w-4xl mx-auto relative z-10">
         <div className="flex justify-between items-center mb-8">
@@ -216,11 +228,21 @@ const AnnouncementsPage = () => {
               {selectedAnnouncement.content}
             </div>
             
-            <div className="text-sm text-gray-500 border-t border-gray-700 pt-4">
+            <div className="text-sm text-gray-500 border-t border-gray-700 pt-4 mb-4">
               <div>작성일: {new Date(selectedAnnouncement.createdAt).toLocaleString('ko-KR')}</div>
               {selectedAnnouncement.isRead && selectedAnnouncement.readAt && (
                 <div>읽은 시간: {new Date(selectedAnnouncement.readAt).toLocaleString('ko-KR')}</div>
               )}
+            </div>
+            
+            {/* 닫기 버튼 */}
+            <div className="flex justify-end mt-4">
+              <button
+                onClick={() => setSelectedAnnouncement(null)}
+                className="px-6 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"
+              >
+                닫기
+              </button>
             </div>
           </motion.div>
         </div>

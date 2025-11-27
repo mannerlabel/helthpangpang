@@ -63,9 +63,15 @@ class AudioService {
 
   // 음성 합성 (TTS)
   speak(text: string): void {
-    if (!this.config.enabled) return
+    console.log('🔊 audioService.speak() 호출:', { text, enabled: this.config.enabled, volume: this.config.volume, voiceType: this.config.voiceType })
+    
+    if (!this.config.enabled) {
+      console.warn('⚠️ 음성 출력이 비활성화되어 있습니다.')
+      return
+    }
 
     if ('speechSynthesis' in window) {
+      console.log('✅ speechSynthesis 지원 확인됨')
       // 이전 음성 취소 (중복 방지)
       speechSynthesis.cancel()
       
@@ -73,14 +79,32 @@ class AudioService {
       utterance.lang = 'ko-KR'
       utterance.volume = this.config.volume
       
+      // 이벤트 리스너 추가 (디버깅용)
+      utterance.onstart = () => {
+        console.log('✅ 음성 출력 시작:', text)
+      }
+      utterance.onend = () => {
+        console.log('✅ 음성 출력 완료:', text)
+      }
+      utterance.onerror = (event) => {
+        console.error('❌ 음성 출력 오류:', event.error, text)
+      }
+      
       // 음성 타입 설정 (더 정확한 매칭)
       const setVoice = () => {
         const voices = speechSynthesis.getVoices()
+        console.log('🔍 사용 가능한 음성 목록:', voices.length, '개')
+        
         if (voices.length === 0) {
           // voices가 아직 로드되지 않았으면 재시도
+          console.log('⏳ 음성 목록 로딩 중... 재시도 예정')
           setTimeout(setVoice, 100)
           return
         }
+        
+        // 한국어 음성 목록 출력 (디버깅용)
+        const koreanVoices = voices.filter(v => v.lang.startsWith('ko'))
+        console.log('🇰🇷 한국어 음성 목록:', koreanVoices.map(v => ({ name: v.name, lang: v.lang, default: v.default })))
         
         let koreanVoice = null
         
@@ -108,17 +132,24 @@ class AudioService {
         
         if (koreanVoice) {
           utterance.voice = koreanVoice
+          console.log('✅ 선택된 음성:', koreanVoice.name, koreanVoice.lang)
+        } else {
+          console.warn('⚠️ 한국어 음성을 찾을 수 없습니다. 기본 음성 사용')
         }
         
+        console.log('🎤 speechSynthesis.speak() 호출:', { text, voice: koreanVoice?.name, volume: utterance.volume })
         speechSynthesis.speak(utterance)
       }
       
       // voices 로드 대기
       if (speechSynthesis.getVoices().length === 0) {
+        console.log('⏳ 음성 목록 로딩 대기 중... onvoiceschanged 이벤트 대기')
         speechSynthesis.onvoiceschanged = setVoice
       } else {
         setVoice()
       }
+    } else {
+      console.error('❌ speechSynthesis가 지원되지 않는 브라우저입니다.')
     }
   }
 

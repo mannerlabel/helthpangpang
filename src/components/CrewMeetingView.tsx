@@ -1612,12 +1612,35 @@ const CrewMeetingView = ({
           
           try {
             console.log(`🚀 WebRTC 연결 시작: ${participant.userName} (${participant.userId})`)
+            
+            // STUN 서버 상태 확인
+            const peerConnection = webrtcService.getPeerConnection(participant.userId)
+            if (peerConnection) {
+              console.log(`🔍 WebRTC 연결 상태 확인 (${participant.userName}):`, {
+                connectionState: peerConnection.connectionState,
+                iceConnectionState: peerConnection.iceConnectionState,
+                iceGatheringState: peerConnection.iceGatheringState,
+                signalingState: peerConnection.signalingState,
+                localDescription: peerConnection.localDescription ? '설정됨' : '없음',
+                remoteDescription: peerConnection.remoteDescription ? '설정됨' : '없음',
+              })
+            }
+            
             const offer = await webrtcService.createOffer(participant.userId)
             console.log(`✅ Offer 생성 완료: ${participant.userName}`, {
               offerType: offer.type,
               hasSdp: !!offer.sdp,
               sdpLength: offer.sdp?.length || 0,
             })
+            
+            // Signal 서버 상태 확인
+            const isSubscribed = (signalingService as any).isSubscribed?.(crewId)
+            console.log(`📡 Signal 서버 상태 확인:`, {
+              crewId,
+              isSubscribed: isSubscribed !== undefined ? isSubscribed : '확인 불가',
+              channelName: `crew_${crewId}_signaling`,
+            })
+            
             await signalingService.sendOffer(crewId, participant.userId, offer)
             // getCurrentUserId가 없을 수 있으므로 안전하게 처리
             let currentUserId = 'unknown'
@@ -1635,15 +1658,23 @@ const CrewMeetingView = ({
             })
 
             // ICE candidate 수집 및 전송
-            const peerConnection = webrtcService.getPeerConnection(participant.userId)
-            if (peerConnection) {
-              peerConnection.onicecandidate = async (event) => {
+            const peerConnectionAfterOffer = webrtcService.getPeerConnection(participant.userId)
+            if (peerConnectionAfterOffer) {
+              peerConnectionAfterOffer.onicecandidate = async (event) => {
                 if (event.candidate) {
+                  console.log(`🧊 ICE candidate 수집됨 (${participant.userName}):`, {
+                    candidateType: event.candidate.type,
+                    candidateProtocol: event.candidate.protocol,
+                    candidateAddress: event.candidate.address,
+                    candidatePort: event.candidate.port,
+                  })
                   await signalingService.sendIceCandidate(
                     crewId,
                     participant.userId,
                     event.candidate
                   )
+                } else {
+                  console.log(`✅ ICE candidate 수집 완료 (${participant.userName})`)
                 }
               }
             }

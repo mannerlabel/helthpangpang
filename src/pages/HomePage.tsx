@@ -9,6 +9,7 @@ import { authService } from '@/services/authService'
 import { databaseService } from '@/services/databaseService'
 import { adminService } from '@/services/adminService'
 import { rankService } from '@/services/rankService'
+import { announcementService } from '@/services/announcementService'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import RankBadge from '@/components/RankBadge'
 import '@/utils/checkSupabaseData' // 데이터 확인 유틸리티 로드
@@ -37,6 +38,7 @@ const HomePage = () => {
   const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null)
   const [overlayPosition, setOverlayPosition] = useState<{ x: number; y: number } | null>(null)
   const [userRank, setUserRank] = useState(1)
+  const [hasNewAnnouncement, setHasNewAnnouncement] = useState(false)
 
   const calculateWeeklyData = (sessions: ExerciseSession[]): { 
     date: string
@@ -184,6 +186,49 @@ const HomePage = () => {
       loadUserRank()
     }
   }, [navigate])
+
+  // 1주일 이내 미확인 공지사항 확인
+  useEffect(() => {
+    const checkNewAnnouncements = async () => {
+      try {
+        console.log('📢 HomePage: 공지사항 확인 시작...')
+        const hasNew = await announcementService.hasUnreadAnnouncementsWithinWeek()
+        console.log('📢 HomePage: 공지사항 확인 결과:', hasNew)
+        setHasNewAnnouncement(hasNew)
+      } catch (error) {
+        console.error('❌ HomePage: 공지사항 확인 실패:', error)
+        setHasNewAnnouncement(false)
+      }
+    }
+
+    // 초기 확인
+    checkNewAnnouncements()
+
+    // 30초마다 확인 (주기적 업데이트)
+    const interval = setInterval(checkNewAnnouncements, 30000)
+
+    // 공지사항을 읽었을 때 즉시 상태 재확인
+    const handleAnnouncementRead = () => {
+      console.log('📢 HomePage: 공지사항 읽음 이벤트 수신, 상태 재확인 중...')
+      // 약간의 지연 후 확인 (데이터베이스 업데이트 반영 시간)
+      setTimeout(checkNewAnnouncements, 500)
+    }
+    
+    // 페이지가 포커스를 받을 때도 상태 재확인 (다른 탭에서 돌아왔을 때)
+    const handleFocus = () => {
+      console.log('📢 HomePage: 페이지 포커스, 공지사항 상태 재확인 중...')
+      checkNewAnnouncements()
+    }
+    
+    window.addEventListener('announcement-read', handleAnnouncementRead)
+    window.addEventListener('focus', handleFocus)
+
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('announcement-read', handleAnnouncementRead)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [])
 
   useEffect(() => {
     const loadSessions = async () => {
@@ -422,11 +467,37 @@ const HomePage = () => {
               <RankBadge rank={userRank} type="user" size="sm" showText={false} />
             </span>
             <button
-              onClick={() => navigate('/announcements')}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+              onClick={() => {
+                console.log('📢 공지사항 버튼 클릭됨, hasNewAnnouncement:', hasNewAnnouncement)
+                navigate('/announcements')
+              }}
+              className="relative px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
             >
               📢 공지사항
+              {hasNewAnnouncement && (
+                <motion.span
+                  initial={{ scale: 0 }}
+                  animate={{ 
+                    scale: [1, 1.2, 1],
+                    opacity: [1, 0.7, 1],
+                  }}
+                  transition={{
+                    duration: 1.5,
+                    repeat: Infinity,
+                    repeatDelay: 0.5,
+                  }}
+                  className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full z-10 whitespace-nowrap"
+                >
+                  New
+                </motion.span>
+              )}
             </button>
+            {/* 디버깅용: hasNewAnnouncement 상태 표시 (개발 중에만) */}
+            {process.env.NODE_ENV === 'development' && (
+              <div className="text-xs text-gray-400">
+                hasNew: {hasNewAnnouncement ? 'true' : 'false'}
+              </div>
+            )}
             <button
               onClick={() => navigate('/settings')}
               className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition"

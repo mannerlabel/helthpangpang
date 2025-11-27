@@ -97,3 +97,4 @@ Supabase 대시보드 → Authentication → Policies에서:
 - [Supabase RLS 가이드](https://supabase.com/docs/guides/auth/row-level-security)
 - [Supabase API 문서](https://supabase.com/docs/reference/javascript/introduction)
 
+

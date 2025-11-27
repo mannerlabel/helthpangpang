@@ -82,14 +82,8 @@ function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<Navigate to="/mode-select" replace />} />
-        <Route
-          path="/home"
-          element={
-            <ProtectedRoute>
-              <HomePage />
-            </ProtectedRoute>
-          }
-        />
+        {/* /home은 /mode-select로 리다이렉트 (통합됨) */}
+        <Route path="/home" element={<Navigate to="/mode-select" replace />} />
         <Route
           path="/mode-select"
           element={
