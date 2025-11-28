@@ -52,14 +52,14 @@ class PoseDetectionService {
           name: kp.name,
         })),
         score: pose.score,
-        box: pose.box
+        box: pose.box && pose.box !== null
           ? {
-              xMin: pose.box.xMin,
-              yMin: pose.box.yMin,
-              xMax: pose.box.xMax,
-              yMax: pose.box.yMax,
-              width: pose.box.width,
-              height: pose.box.height,
+              xMin: pose.box.xMin ?? 0,
+              yMin: pose.box.yMin ?? 0,
+              xMax: pose.box.xMax ?? 0,
+              yMax: pose.box.yMax ?? 0,
+              width: pose.box.width ?? 0,
+              height: pose.box.height ?? 0,
             }
           : undefined,
       }))

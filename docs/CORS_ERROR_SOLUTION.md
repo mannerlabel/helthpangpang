@@ -98,3 +98,4 @@ Supabase 대시보드 → Authentication → Policies에서:
 - [Supabase API 문서](https://supabase.com/docs/reference/javascript/introduction)
 
 
+

@@ -182,6 +182,36 @@ export interface ExerciseSession {
   completed: boolean
 }
 
+export interface ExerciseVideoPose {
+  timestamp: number
+  image: string // base64 encoded image
+  keypoints: Array<{
+    x: number
+    y: number
+    z?: number
+    score?: number
+    name?: string
+  }>
+  angles: {
+    [key: string]: number // 예: "left_elbow": 90, "right_elbow": 90
+  }
+  description: string // 예: "팔각도 90도, 다리각도 180도, 일어서기"
+}
+
+export interface ExerciseVideo {
+  id: string
+  title: string
+  description?: string
+  videoUrl?: string
+  createdBy: string
+  createdAt: number
+  updatedAt: number
+  isActive: boolean
+  poseData: ExerciseVideoPose[]
+  totalPoses: number
+  durationSeconds: number
+}
+
 class DatabaseService {
   private initialized = false
   private userIdMappingCache: Map<string, string> = new Map() // 사용자 ID 매핑 캐시
@@ -4884,6 +4914,210 @@ class DatabaseService {
     // 캐시에 저장
     this.userIdMappingCache.set(localStorageUserId, supabaseUser.id)
     return supabaseUser.id
+  }
+
+  // 운동 영상 관련 함수들
+  async createExerciseVideo(video: Omit<ExerciseVideo, 'id' | 'createdAt' | 'updatedAt'>): Promise<ExerciseVideo> {
+    await this.initialize()
+    
+    if (USE_SUPABASE && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('exercise_videos')
+          .insert({
+            title: video.title,
+            description: video.description || null,
+            // video_url은 저장하지 않음 (영상 파일은 저장하지 않고 포즈 데이터만 저장)
+            created_by: video.createdBy,
+            is_active: video.isActive !== false,
+            pose_data: video.poseData,
+            total_poses: video.totalPoses || video.poseData.length,
+            duration_seconds: video.durationSeconds || 0,
+          })
+          .select()
+          .single()
+        
+        if (error) {
+          console.error('Supabase 운동 영상 생성 실패:', error)
+          throw error
+        }
+        
+        return this.mapSupabaseExerciseVideo(data)
+      } catch (e) {
+        console.error('Supabase 운동 영상 생성 중 오류:', e)
+        throw e
+      }
+    }
+    
+    // localStorage (개발용)
+    const videos = this.readTable<ExerciseVideo>('exercise_videos')
+    const newVideo: ExerciseVideo = {
+      ...video,
+      id: `video_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+    videos.push(newVideo)
+    this.writeTable('exercise_videos', videos)
+    return newVideo
+  }
+
+  async getExerciseVideos(limit: number = 50, offset: number = 0): Promise<{ data: ExerciseVideo[]; hasMore: boolean }> {
+    await this.initialize()
+    
+    if (USE_SUPABASE && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('exercise_videos')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1)
+        
+        if (error) {
+          console.error('Supabase 운동 영상 조회 실패:', error)
+          throw error
+        }
+        
+        const videos = (data || []).map(v => this.mapSupabaseExerciseVideo(v))
+        const hasMore = videos.length === limit
+        
+        return { data: videos, hasMore }
+      } catch (e) {
+        console.error('Supabase 운동 영상 조회 중 오류:', e)
+        throw e
+      }
+    }
+    
+    // localStorage (개발용)
+    const videos = this.readTable<ExerciseVideo>('exercise_videos')
+    const sorted = videos.sort((a, b) => b.createdAt - a.createdAt)
+    const paginated = sorted.slice(offset, offset + limit)
+    return {
+      data: paginated,
+      hasMore: offset + limit < sorted.length,
+    }
+  }
+
+  async getExerciseVideoById(id: string): Promise<ExerciseVideo | null> {
+    await this.initialize()
+    
+    if (USE_SUPABASE && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('exercise_videos')
+          .select('*')
+          .eq('id', id)
+          .single()
+        
+        if (error) {
+          if (error.code === 'PGRST116') {
+            return null
+          }
+          console.error('Supabase 운동 영상 조회 실패:', error)
+          throw error
+        }
+        
+        return data ? this.mapSupabaseExerciseVideo(data) : null
+      } catch (e) {
+        console.error('Supabase 운동 영상 조회 중 오류:', e)
+        throw e
+      }
+    }
+    
+    // localStorage (개발용)
+    const videos = this.readTable<ExerciseVideo>('exercise_videos')
+    return videos.find(v => v.id === id) || null
+  }
+
+  async updateExerciseVideo(id: string, updates: Partial<ExerciseVideo>): Promise<ExerciseVideo | null> {
+    await this.initialize()
+    
+    if (USE_SUPABASE && supabase) {
+      try {
+        const updateData: any = {}
+        if (updates.title !== undefined) updateData.title = updates.title
+        if (updates.description !== undefined) updateData.description = updates.description
+        // videoUrl은 업데이트하지 않음 (영상 파일은 저장하지 않음)
+        if (updates.isActive !== undefined) updateData.is_active = updates.isActive
+        if (updates.poseData !== undefined) updateData.pose_data = updates.poseData
+        if (updates.totalPoses !== undefined) updateData.total_poses = updates.totalPoses
+        if (updates.durationSeconds !== undefined) updateData.duration_seconds = updates.durationSeconds
+        
+        const { data, error } = await supabase
+          .from('exercise_videos')
+          .update(updateData)
+          .eq('id', id)
+          .select()
+          .single()
+        
+        if (error) {
+          console.error('Supabase 운동 영상 수정 실패:', error)
+          throw error
+        }
+        
+        return data ? this.mapSupabaseExerciseVideo(data) : null
+      } catch (e) {
+        console.error('Supabase 운동 영상 수정 중 오류:', e)
+        throw e
+      }
+    }
+    
+    // localStorage (개발용)
+    const videos = this.readTable<ExerciseVideo>('exercise_videos')
+    const index = videos.findIndex(v => v.id === id)
+    if (index === -1) return null
+    
+    videos[index] = {
+      ...videos[index],
+      ...updates,
+      updatedAt: Date.now(),
+    }
+    this.writeTable('exercise_videos', videos)
+    return videos[index]
+  }
+
+  async deleteExerciseVideo(id: string): Promise<boolean> {
+    await this.initialize()
+    
+    if (USE_SUPABASE && supabase) {
+      try {
+        const { error } = await supabase
+          .from('exercise_videos')
+          .delete()
+          .eq('id', id)
+        
+        if (error) {
+          console.error('Supabase 운동 영상 삭제 실패:', error)
+          throw error
+        }
+        return true
+      } catch (e) {
+        console.error('Supabase 운동 영상 삭제 중 오류:', e)
+        throw e
+      }
+    }
+    
+    // localStorage (개발용)
+    const videos = this.readTable<ExerciseVideo>('exercise_videos')
+    const filtered = videos.filter(v => v.id !== id)
+    this.writeTable('exercise_videos', filtered)
+    return true
+  }
+
+  private mapSupabaseExerciseVideo(video: any): ExerciseVideo {
+    return {
+      id: video.id,
+      title: video.title,
+      description: video.description || undefined,
+      videoUrl: video.video_url || undefined,
+      createdBy: video.created_by,
+      createdAt: new Date(video.created_at).getTime(),
+      updatedAt: new Date(video.updated_at).getTime(),
+      isActive: video.is_active !== false,
+      poseData: video.pose_data || [],
+      totalPoses: video.total_poses || 0,
+      durationSeconds: video.duration_seconds || 0,
+    }
   }
 }
 

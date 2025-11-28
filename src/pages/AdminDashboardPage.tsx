@@ -6,12 +6,13 @@ import NavigationButtons from '@/components/NavigationButtons'
 import { authService } from '@/services/authService'
 import { adminService, DashboardStats, Announcement, ApiKey } from '@/services/adminService'
 import { loginHistoryService, LoginHistory } from '@/services/loginHistoryService'
-import { databaseService, User, Crew, JoggingCrew } from '@/services/databaseService'
+import { databaseService, User, Crew, JoggingCrew, ExerciseVideo } from '@/services/databaseService'
 import { rankService } from '@/services/rankService'
 import { SingleGoal, JoggingGoal } from '@/types'
 import { EXERCISE_TYPE_NAMES } from '@/constants/exerciseTypes'
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
 import RankBadge from '@/components/RankBadge'
+import ExerciseVideoRegistration from '@/components/ExerciseVideoRegistration'
 
 // 꺽은선 그래프 컴포넌트
 interface LineChartProps {
@@ -212,6 +213,12 @@ const AdminDashboardPage = () => {
     isActive: true,
   })
   
+  // 운동 영상 관리 상태
+  const [exerciseVideos, setExerciseVideos] = useState<ExerciseVideo[]>([])
+  const [showVideoRegistration, setShowVideoRegistration] = useState(false)
+  const [editingVideo, setEditingVideo] = useState<ExerciseVideo | null>(null)
+  const [videoPagination, setVideoPagination] = useState({ offset: 0, hasMore: true, loading: false })
+  
   // 페이지네이션 상태
   const [userPagination, setUserPagination] = useState({ offset: 0, hasMore: true, loading: false })
   const [crewPagination, setCrewPagination] = useState({ offset: 0, hasMore: true, loading: false })
@@ -241,6 +248,7 @@ const AdminDashboardPage = () => {
     loadGoals()
     loadAnnouncements()
     loadLoginHistory()
+    loadExerciseVideos()
   }, [navigate])
 
   // 통계만 로드 (초기 로드 최적화 및 reload)
@@ -643,6 +651,95 @@ const AdminDashboardPage = () => {
     } catch (error) {
       console.error('공지사항 목록 추가 로드 실패:', error)
       setAnnouncementPagination(prev => ({ ...prev, loading: false }))
+    }
+  }
+
+  // 운동 영상 목록 로드
+  const loadExerciseVideos = async () => {
+    try {
+      setVideoPagination(prev => ({ ...prev, loading: true, offset: 0 }))
+      const result = await databaseService.getExerciseVideos(PAGE_SIZE, 0)
+      setExerciseVideos(result.data)
+      setVideoPagination({ offset: PAGE_SIZE, hasMore: result.hasMore, loading: false })
+    } catch (error) {
+      console.error('운동 영상 목록 로드 실패:', error)
+      setVideoPagination(prev => ({ ...prev, loading: false }))
+    }
+  }
+
+  // 운동 영상 목록 더 불러오기
+  const loadMoreExerciseVideos = async () => {
+    if (videoPagination.loading || !videoPagination.hasMore) return
+    
+    try {
+      setVideoPagination(prev => ({ ...prev, loading: true }))
+      const result = await databaseService.getExerciseVideos(PAGE_SIZE, videoPagination.offset)
+      setExerciseVideos(prev => [...prev, ...result.data])
+      setVideoPagination({ 
+        offset: videoPagination.offset + PAGE_SIZE, 
+        hasMore: result.hasMore, 
+        loading: false 
+      })
+    } catch (error) {
+      console.error('운동 영상 목록 추가 로드 실패:', error)
+      setVideoPagination(prev => ({ ...prev, loading: false }))
+    }
+  }
+
+  // 운동 영상 등록 완료
+  const handleVideoRegistrationComplete = async (videoData: {
+    title: string
+    description?: string
+    poseData: ExerciseVideo['poseData']
+    totalPoses: number
+    durationSeconds: number
+  }) => {
+    try {
+      const user = authService.getCurrentUser()
+      if (!user) {
+        alert('로그인이 필요합니다.')
+        return
+      }
+
+      await databaseService.createExerciseVideo({
+        ...videoData,
+        createdBy: user.id,
+        isActive: true,
+      })
+
+      alert(`${videoData.title} 항목을 등록했습니다.`)
+      setShowVideoRegistration(false)
+      loadExerciseVideos()
+    } catch (error) {
+      console.error('운동 영상 등록 실패:', error)
+      alert('운동 영상 등록에 실패했습니다.')
+    }
+  }
+
+  // 운동 영상 수정
+  const handleVideoUpdate = async (id: string, updates: Partial<ExerciseVideo>) => {
+    try {
+      await databaseService.updateExerciseVideo(id, updates)
+      alert('운동 영상이 수정되었습니다.')
+      setEditingVideo(null)
+      loadExerciseVideos()
+    } catch (error) {
+      console.error('운동 영상 수정 실패:', error)
+      alert('운동 영상 수정에 실패했습니다.')
+    }
+  }
+
+  // 운동 영상 삭제
+  const handleVideoDelete = async (id: string) => {
+    if (!confirm('정말 이 운동 영상을 삭제하시겠습니까?')) return
+
+    try {
+      await databaseService.deleteExerciseVideo(id)
+      alert('운동 영상이 삭제되었습니다.')
+      loadExerciseVideos()
+    } catch (error) {
+      console.error('운동 영상 삭제 실패:', error)
+      alert('운동 영상 삭제에 실패했습니다.')
     }
   }
 
@@ -2463,7 +2560,7 @@ const AdminDashboardPage = () => {
         <div className="bg-gray-800/90 rounded-2xl p-6 mb-8">
           <div className="flex flex-col gap-4 mb-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-xl md:text-2xl font-bold text-white">🔑 API Key 관리</h2>
+              <h2 className="text-xl md:text-2xl font-bold text-white">🔑 API Key 관리(개발중)</h2>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
@@ -2534,6 +2631,164 @@ const AdminDashboardPage = () => {
                   </div>
                 </div>
               ))
+            )}
+          </div>
+        </div>
+
+        {/* 운동 영상 수정 모달 */}
+        {editingVideo && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-gray-800 rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+              <h2 className="text-2xl font-bold text-white mb-4">운동 영상 수정</h2>
+              
+              <div className="space-y-4 mb-6">
+                <div>
+                  <label className="block text-white text-sm font-semibold mb-2">제목</label>
+                  <input
+                    type="text"
+                    value={editingVideo.title}
+                    onChange={(e) => setEditingVideo(prev => prev ? { ...prev, title: e.target.value } : null)}
+                    className="w-full px-4 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="운동 영상 제목을 입력하세요"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-white text-sm font-semibold mb-2">설명</label>
+                  <textarea
+                    value={editingVideo.description || ''}
+                    onChange={(e) => setEditingVideo(prev => prev ? { ...prev, description: e.target.value } : null)}
+                    className="w-full px-4 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[150px]"
+                    placeholder="운동 영상 설명을 입력하세요"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setEditingVideo(null)}
+                  className="flex-1 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                >
+                  취소
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!editingVideo) return
+                    await handleVideoUpdate(editingVideo.id, {
+                      title: editingVideo.title,
+                      description: editingVideo.description,
+                    })
+                    setEditingVideo(null)
+                  }}
+                  className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+                >
+                  저장
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 운동 영상 등록 */}
+        <div className="bg-gray-800/90 rounded-2xl p-6 mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-2xl font-bold text-white">🎥 운동등록(개발중)</h2>
+            <button
+              onClick={() => {
+                setShowVideoRegistration(true)
+                setEditingVideo(null)
+              }}
+              className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 font-semibold text-sm flex items-center gap-2"
+            >
+              ➕ 추가
+            </button>
+          </div>
+
+          {/* 개발개선사항 섹션 */}
+          <div className="mb-4">
+            <h3 className="text-sm font-semibold text-gray-400 mb-2">개발개선사항</h3>
+            <p className="text-xs text-gray-500 leading-relaxed">
+              운동등록 테스트완료, 포즈인식, 재실행 등 기본사항 완료
+            </p>
+          </div>
+
+          {showVideoRegistration && (
+            <div className="mb-6">
+              <ExerciseVideoRegistration
+                onComplete={handleVideoRegistrationComplete}
+                onCancel={() => setShowVideoRegistration(false)}
+              />
+            </div>
+          )}
+
+          {/* 영상 목록 */}
+          <div className="space-y-3">
+            {exerciseVideos.length === 0 ? (
+              <div className="text-gray-400 text-center py-8">등록된 영상이 없습니다.</div>
+            ) : (
+              exerciseVideos.map((video) => (
+                <div key={video.id} className="bg-gray-700 rounded-lg p-4">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="font-semibold text-lg mb-1">{video.title}</div>
+                      {video.description && (
+                        <div className="text-sm text-gray-400 mb-2">
+                          {video.description.length > 5 ? `${video.description.substring(0, 5)}...` : video.description}
+                        </div>
+                      )}
+                      <div className="text-xs text-gray-500 space-y-1">
+                        <div>포즈 수: {video.totalPoses}개</div>
+                        <div>유지 시간: {Math.floor(video.durationSeconds / 60)}분 {video.durationSeconds % 60}초</div>
+                        <div>생성일: {new Date(video.createdAt).toLocaleDateString('ko-KR')}</div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 ml-4">
+                      <button
+                        onClick={() => {
+                          navigate('/exercise-video-test', {
+                            state: {
+                              video,
+                              config: {
+                                type: 'squat', // 기본값, 실제로는 영상 데이터에서 추론 가능
+                                sets: 1,
+                                reps: video.totalPoses || 10,
+                                restTime: 10,
+                              },
+                            },
+                          })
+                        }}
+                        className="px-3 py-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 text-xs font-semibold"
+                        title="운동 점수 및 분석 결과 테스트"
+                      >
+                        테스트
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingVideo(video)
+                        }}
+                        className="px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-xs font-semibold"
+                      >
+                        수정
+                      </button>
+                      <button
+                        onClick={() => handleVideoDelete(video.id)}
+                        className="px-3 py-1.5 bg-red-500 text-white rounded-lg hover:bg-red-600 text-xs font-semibold"
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+            {videoPagination.hasMore && (
+              <button
+                onClick={loadMoreExerciseVideos}
+                disabled={videoPagination.loading}
+                className="w-full py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed"
+              >
+                {videoPagination.loading ? '로딩 중...' : '더 보기'}
+              </button>
             )}
           </div>
         </div>

@@ -27,6 +27,7 @@ import SingleGoalCreatePage from './pages/SingleGoalCreatePage'
 import AdminDashboardPage from './pages/AdminDashboardPage'
 import AdminDormantCrewsPage from './pages/AdminDormantCrewsPage'
 import AnnouncementsPage from './pages/AnnouncementsPage'
+import ExerciseVideoTestPage from './pages/ExerciseVideoTestPage'
 import { authService } from './services/authService'
 
 // 인증이 필요한 페이지를 보호하는 컴포넌트
@@ -105,6 +106,14 @@ function App() {
           element={
             <ProtectedRoute>
               <TrainingPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/exercise-video-test"
+          element={
+            <ProtectedRoute>
+              <ExerciseVideoTestPage />
             </ProtectedRoute>
           }
         />
