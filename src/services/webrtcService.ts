@@ -179,10 +179,21 @@ class WebRTCService {
 
   /**
    * 로컬 스트림 제거
+   * 주의: 공유 스트림의 트랙은 stop하지 않음 (다른 컴포넌트가 사용 중일 수 있음)
    */
-  removeLocalStream(): void {
+  removeLocalStream(sharedVideoStream?: MediaStream | null): void {
     if (this.localStream) {
-      this.localStream.getTracks().forEach((track) => track.stop())
+      const sharedVideoTrack = sharedVideoStream?.getVideoTracks()[0]
+      
+      // 공유 스트림의 트랙은 stop하지 않음
+      this.localStream.getTracks().forEach((track) => {
+        if (track !== sharedVideoTrack) {
+          track.stop()
+        } else {
+          safeLog('✅ 공유 스트림 트랙 보호 (removeLocalStream에서 stop하지 않음)')
+        }
+      })
+      
       this.localStream = null
     }
   }
@@ -327,7 +338,12 @@ class WebRTCService {
           iceGatheringState: peerConnection.iceGatheringState,
         }
         this.notifyConnectionStateChange(userId, state)
-        safeLog(`ICE connection state for ${userId}:`, state.iceConnectionState)
+        safeLog(`🧊 ICE 연결 상태 변경: ${userId}`, {
+          iceConnectionState: state.iceConnectionState,
+          connectionState: state.connectionState,
+          iceGatheringState: state.iceGatheringState,
+          signalingState: peerConnection.signalingState,
+        })
       }
 
       // Connection state 변경 감지
@@ -338,7 +354,12 @@ class WebRTCService {
           iceGatheringState: peerConnection.iceGatheringState,
         }
         this.notifyConnectionStateChange(userId, state)
-        safeLog(`Connection state for ${userId}:`, state.connectionState)
+        safeLog(`🔗 WebRTC 연결 상태 변경: ${userId}`, {
+          connectionState: state.connectionState,
+          iceConnectionState: state.iceConnectionState,
+          iceGatheringState: state.iceGatheringState,
+          signalingState: peerConnection.signalingState,
+        })
       }
 
       // Remote stream 수신
@@ -404,6 +425,12 @@ class WebRTCService {
    * Offer 생성
    */
   async createOffer(userId: string): Promise<RTCSessionDescriptionInit> {
+    // userId 유효성 검사
+    if (!userId || typeof userId !== 'string') {
+      safeError(`❌ createOffer: 유효하지 않은 userId:`, userId)
+      throw new Error(`Invalid userId: ${userId}`)
+    }
+    
     const peerConnection = await this.createPeerConnection(userId)
     
     // 현재 상태 확인
@@ -423,8 +450,38 @@ class WebRTCService {
     if (hasLocalDescription && peerConnection.localDescription?.type === 'offer') {
       safeWarn(`⚠️ Offer가 이미 존재합니다: ${userId}`, {
         currentSignalingState: signalingState,
+        iceConnectionState: peerConnection.iceConnectionState,
+        connectionState: peerConnection.connectionState,
+        hasRemoteDescription: hasRemoteDescription,
       })
-      // 기존 Offer 반환
+      
+      // have-local-offer 상태에서 일정 시간(10초) 동안 Answer를 받지 못하면 연결 재생성
+      const offerTimeoutKey = `offer_timeout_${userId}`
+      const offerTimestamp = (window as any)[offerTimeoutKey] || Date.now()
+      const timeSinceOffer = Date.now() - offerTimestamp
+      const OFFER_TIMEOUT = 10000 // 10초
+      
+      if (timeSinceOffer > OFFER_TIMEOUT && !hasRemoteDescription) {
+        safeWarn(`   Offer 타임아웃 (${Math.round(timeSinceOffer / 1000)}초 경과), 연결 재생성: ${userId}`)
+        await this.closeConnection(userId)
+        delete (window as any)[offerTimeoutKey]
+        // 재시도: 새로운 PeerConnection 생성 후 다시 시도
+        const newPeerConnection = await this.createPeerConnection(userId)
+        const newOffer = await newPeerConnection.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true,
+        })
+        await newPeerConnection.setLocalDescription(newOffer)
+        const newOfferTimeoutKey = `offer_timeout_${userId}`
+        (window as any)[newOfferTimeoutKey] = Date.now()
+        return newOffer
+      }
+      
+      // 타임아웃이 아니면 기존 Offer 반환
+      if (!(window as any)[offerTimeoutKey]) {
+        (window as any)[offerTimeoutKey] = Date.now()
+        safeLog(`   Offer 타임아웃 타이머 시작: ${userId}`)
+      }
       return peerConnection.localDescription
     }
     
@@ -439,7 +496,16 @@ class WebRTCService {
       if (signalingState === 'have-remote-offer' || signalingState === 'closed') {
         safeWarn(`   연결을 재생성합니다...`)
         await this.closeConnection(userId)
-        return this.createOffer(userId)
+        // 재시도: 새로운 PeerConnection 생성 후 다시 시도
+        const newPeerConnection = await this.createPeerConnection(userId)
+        const newOffer = await newPeerConnection.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true,
+        })
+        await newPeerConnection.setLocalDescription(newOffer)
+        const newOfferTimeoutKey = `offer_timeout_${userId}`
+        (window as any)[newOfferTimeoutKey] = Date.now()
+        return newOffer
       }
     }
     
@@ -449,10 +515,17 @@ class WebRTCService {
         offerToReceiveVideo: true,
       })
       await peerConnection.setLocalDescription(offer)
+      
+      // Offer 타임아웃 타이머 시작
+      const offerTimeoutKey = `offer_timeout_${userId}`
+      (window as any)[offerTimeoutKey] = Date.now()
+      
       safeLog(`✅ Offer 생성 및 설정 완료: ${userId}`, {
         offerType: offer.type,
         hasSdp: !!offer.sdp,
+        sdpLength: offer.sdp?.length || 0,
         newSignalingState: peerConnection.signalingState,
+        iceConnectionState: peerConnection.iceConnectionState,
       })
       return offer
     } catch (error) {
@@ -718,10 +791,22 @@ class WebRTCService {
     
     try {
       await peerConnection.setRemoteDescription(answer)
-      safeLog(`✅ Remote description 설정 완료: ${userId}`)
-      safeLog(`   ICE connection state: ${peerConnection.iceConnectionState}`)
-      safeLog(`   Connection state: ${peerConnection.connectionState}`)
-      safeLog(`   Signaling state: ${peerConnection.signalingState}`)
+      
+      // Offer 타임아웃 타이머 리셋 (Answer 수신 성공)
+      const offerTimeoutKey = `offer_timeout_${userId}`
+      if ((window as any)[offerTimeoutKey]) {
+        delete (window as any)[offerTimeoutKey]
+        safeLog(`   Offer 타임아웃 타이머 리셋: ${userId}`)
+      }
+      
+      safeLog(`✅ Remote description 설정 완료: ${userId}`, {
+        answerType: answer.type,
+        hasSdp: !!answer.sdp,
+        sdpLength: answer.sdp?.length || 0,
+        iceConnectionState: peerConnection.iceConnectionState,
+        connectionState: peerConnection.connectionState,
+        signalingState: peerConnection.signalingState,
+      })
     } catch (error) {
       safeError(`❌ Error setting remote description for ${userId}:`, error)
       safeError(`   현재 상태:`, {

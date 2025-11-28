@@ -1563,6 +1563,7 @@ const TrainingPage = () => {
           <NavigationButtons 
             exitMode={true}
             exitTitle="나가기"
+            showHome={false}
             onBack={() => {
               // 삼성 갤럭시에서 window.confirm이 제대로 작동하지 않을 수 있으므로 커스텀 모달 사용
               setShowExitConfirm(true)

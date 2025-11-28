@@ -107,17 +107,19 @@ const CrewChatPanel = ({ crewId, isOpen, onClose, entryMessage, onNewMessage, on
         weatherLoadedRef.current = true
       }
       // 메시지만 주기적으로 갱신 (날씨는 제외)
+      // TODO: Supabase Realtime 구독으로 변경하여 폴링 제거 예정
       const interval = setInterval(() => {
         loadMessages()
-      }, 2000) // 2초마다 새 메시지 확인
+      }, 5000) // 5초마다 새 메시지 확인 (2초 → 5초로 증가하여 네트워크 부하 감소)
       return () => clearInterval(interval)
     } else {
       // 채팅창이 닫히면 날씨 로드 플래그 리셋
       weatherLoadedRef.current = false
       // 채팅창이 닫혀있을 때도 주기적으로 메시지를 확인하여 새 메시지 알림을 받을 수 있도록 함
+      // TODO: Supabase Realtime 구독으로 변경하여 폴링 제거 예정
       const interval = setInterval(() => {
         loadMessages()
-      }, 3000) // 3초마다 새 메시지 확인 (채팅창이 닫혀있을 때는 조금 더 긴 간격)
+      }, 10000) // 10초마다 새 메시지 확인 (3초 → 10초로 증가하여 네트워크 부하 감소)
       return () => clearInterval(interval)
     }
   }, [isOpen, crewId])

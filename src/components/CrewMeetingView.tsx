@@ -238,12 +238,27 @@ const CrewMeetingView = ({
         const unsubscribeRemoteStream = webrtcService.onRemoteStream(
           (userId, stream) => {
             if (stream) {
+              const videoTracks = stream.getVideoTracks()
+              const audioTracks = stream.getAudioTracks()
+              console.log(`📹 Remote stream 수신: ${userId}`, {
+                streamId: stream.id,
+                videoTracks: videoTracks.length,
+                audioTracks: audioTracks.length,
+                active: stream.active,
+                videoTrackEnabled: videoTracks[0]?.enabled,
+                audioTrackEnabled: audioTracks[0]?.enabled,
+                videoTrackReadyState: videoTracks[0]?.readyState,
+                audioTrackReadyState: audioTracks[0]?.readyState,
+                videoTrackMuted: videoTracks[0]?.muted,
+                audioTrackMuted: audioTracks[0]?.muted,
+              })
               setRemoteStreams((prev) => {
                 const newMap = new Map(prev)
                 newMap.set(userId, stream)
                 return newMap
               })
             } else {
+              console.log(`📹 Remote stream 제거: ${userId}`)
               setRemoteStreams((prev) => {
                 const newMap = new Map(prev)
                 newMap.delete(userId)
@@ -256,6 +271,11 @@ const CrewMeetingView = ({
         // 연결 상태 변경 처리
         const unsubscribeConnectionState = webrtcService.onConnectionStateChange(
           (userId, state) => {
+            console.log(`🔗 연결 상태 변경 콜백: ${userId}`, {
+              iceConnectionState: state.iceConnectionState,
+              connectionState: state.connectionState,
+              iceGatheringState: state.iceGatheringState,
+            })
             setConnectionStates((prev) => {
               const newMap = new Map(prev)
               newMap.set(userId, state.iceConnectionState)
@@ -503,16 +523,27 @@ const CrewMeetingView = ({
       const hasAudio = newStream.getAudioTracks().length > 0
       if (myAudioEnabled && !hasAudio) {
         // 오디오 추가 필요
+        console.log('🎤 오디오 추가 시도 (공유 스트림)...')
         navigator.mediaDevices.getUserMedia({ audio: true })
           .then(audioStream => {
+            console.log('✅ 오디오 스트림 획득 성공:', {
+              audioTracks: audioStream.getAudioTracks().length,
+              trackEnabled: audioStream.getAudioTracks()[0]?.enabled,
+              trackReadyState: audioStream.getAudioTracks()[0]?.readyState,
+            })
             audioStream.getAudioTracks().forEach(track => {
               newStream.addTrack(track)
             })
             setMyVideoStream(newStream)
             webrtcService.setLocalStream(newStream)
-            console.log('✅ 공유 스트림 + 오디오 설정 완료')
+            console.log('✅ 공유 스트림 + 오디오 설정 완료', {
+              totalTracks: newStream.getTracks().length,
+              videoTracks: newStream.getVideoTracks().length,
+              audioTracks: newStream.getAudioTracks().length,
+            })
           })
           .catch(error => {
+            console.error('❌ 오디오 획득 실패:', error)
             console.warn('⚠️ 오디오 획득 실패, 비디오만 사용:', error)
             setMyVideoStream(newStream)
             webrtcService.setLocalStream(newStream)
@@ -543,28 +574,44 @@ const CrewMeetingView = ({
       if (hasAudio !== myAudioEnabled) {
         if (myAudioEnabled) {
           // 오디오 추가
+          console.log('🎤 오디오 추가 시도 (공유 스트림 사용 중)...')
           navigator.mediaDevices.getUserMedia({ audio: true })
             .then(audioStream => {
+              console.log('✅ 오디오 스트림 획득 성공:', {
+                audioTracks: audioStream.getAudioTracks().length,
+                trackEnabled: audioStream.getAudioTracks()[0]?.enabled,
+                trackReadyState: audioStream.getAudioTracks()[0]?.readyState,
+              })
               if (myVideoStream) {
                 audioStream.getAudioTracks().forEach(track => {
                   myVideoStream.addTrack(track)
                 })
                 webrtcService.setLocalStream(myVideoStream)
-                console.log('✅ 오디오 추가 완료')
+                console.log('✅ 오디오 추가 완료', {
+                  totalTracks: myVideoStream.getTracks().length,
+                  videoTracks: myVideoStream.getVideoTracks().length,
+                  audioTracks: myVideoStream.getAudioTracks().length,
+                })
               }
             })
             .catch(error => {
+              console.error('❌ 오디오 추가 실패:', error)
               console.warn('⚠️ 오디오 추가 실패:', error)
             })
         } else {
           // 오디오 제거
           if (myVideoStream) {
+            console.log('🔇 오디오 제거 중...', {
+              audioTracksBefore: myVideoStream.getAudioTracks().length,
+            })
             myVideoStream.getAudioTracks().forEach(track => {
               track.stop()
               myVideoStream.removeTrack(track)
             })
             webrtcService.setLocalStream(myVideoStream)
-            console.log('✅ 오디오 제거 완료')
+            console.log('✅ 오디오 제거 완료', {
+              audioTracksAfter: myVideoStream.getAudioTracks().length,
+            })
           }
         }
       }
@@ -575,9 +622,10 @@ const CrewMeetingView = ({
   const forceReacquireRef = useRef(false)
   
   useEffect(() => {
-    // 내 영상 스트림 설정 (공유 스트림이 없는 경우에만)
+    // 내 영상 스트림 설정 (공유 스트림이 있으면 항상 사용 - 카메라 리소스 경쟁 방지)
     if (sharedVideoStream && myVideoEnabled) {
-      return // 공유 스트림이 있으면 위 useEffect에서 처리
+      console.log('✅ 공유 스트림 사용 중: 별도 카메라 스트림 생성하지 않음 (리소스 경쟁 방지)')
+      return // 공유 스트림이 있으면 항상 사용 (중복 스트림 생성 방지)
     }
     
     const activeVideoCount = participants.filter(p => p.status !== 'inactive' && p.videoEnabled).length + (myVideoEnabled ? 1 : 0)
@@ -729,7 +777,15 @@ const CrewMeetingView = ({
           
           // WebRTC 서비스에 로컬 스트림 설정
           await webrtcService.setLocalStream(stream)
-          console.log('✅ WebRTC 서비스에 로컬 스트림 설정 완료')
+          console.log('✅ WebRTC 서비스에 로컬 스트림 설정 완료', {
+            streamId: stream.id,
+            videoTracks: stream.getVideoTracks().length,
+            audioTracks: stream.getAudioTracks().length,
+            videoTrackEnabled: stream.getVideoTracks()[0]?.enabled,
+            audioTrackEnabled: stream.getAudioTracks()[0]?.enabled,
+            videoTrackReadyState: stream.getVideoTracks()[0]?.readyState,
+            audioTrackReadyState: stream.getAudioTracks()[0]?.readyState,
+          })
         })
         .catch((error) => {
           console.error('❌ 영상 스트림 가져오기 실패:', error)
@@ -766,13 +822,46 @@ const CrewMeetingView = ({
         })
     } else {
       if (myVideoStream) {
-        myVideoStream.getTracks().forEach((track) => track.stop())
-        setMyVideoStream(null)
-        if (myVideoRef.current) {
-          myVideoRef.current.srcObject = null
+        // 공유 스트림의 트랙은 절대 정리하지 않도록 보호
+        const sharedVideoTrack = sharedVideoStream?.getVideoTracks()[0]
+        const currentVideoTrack = myVideoStream.getVideoTracks()[0]
+        const isUsingSharedTrack = currentVideoTrack === sharedVideoTrack
+        
+        console.log('🛑 비디오 비활성화: 스트림 정리 시작', {
+          hasSharedVideoStream: !!sharedVideoStream,
+          isUsingSharedTrack,
+          streamId: myVideoStream.id,
+        })
+        
+        // 공유 스트림의 트랙이 아닌 경우만 정리
+        myVideoStream.getTracks().forEach((track) => {
+          // 공유 스트림의 비디오 트랙은 절대 정리하지 않음
+          if (track !== sharedVideoTrack) {
+            console.log('🛑 트랙 정리:', { kind: track.kind, id: track.id })
+            track.stop()
+          } else {
+            console.log('✅ 공유 스트림 트랙 보호 (정리하지 않음):', { kind: track.kind, id: track.id })
+          }
+        })
+        
+        // 공유 스트림을 사용 중이면 스트림을 null로 설정하지 않음 (다른 컴포넌트가 사용 중일 수 있음)
+        if (!isUsingSharedTrack) {
+          setMyVideoStream(null)
+          if (myVideoRef.current) {
+            myVideoRef.current.srcObject = null
+          }
+          // WebRTC 서비스에서 로컬 스트림 제거 (공유 스트림이 아닌 경우만)
+          // 공유 스트림 정보를 전달하여 트랙 보호
+          webrtcService.removeLocalStream(sharedVideoStream)
+        } else {
+          // 공유 스트림을 사용 중이면 비디오 요소만 정리하고 스트림은 유지
+          console.log('✅ 공유 스트림 사용 중이므로 스트림 유지, 비디오 요소만 정리')
+          if (myVideoRef.current) {
+            myVideoRef.current.srcObject = null
+          }
+          // myVideoStream은 유지 (다른 컴포넌트가 사용 중일 수 있음)
+          // WebRTC 로컬 스트림도 유지 (공유 스트림이므로)
         }
-        // WebRTC 서비스에서 로컬 스트림 제거
-        webrtcService.removeLocalStream()
       }
     }
 
@@ -965,13 +1054,19 @@ const CrewMeetingView = ({
       }))
       
       if (videoElement && videoElement.srcObject !== stream) {
+        const videoTracks = stream.getVideoTracks()
+        const audioTracks = stream.getAudioTracks()
         console.log(`🔄 Remote stream 업데이트: ${userId}`, {
           streamId: stream.id,
-          videoTracks: stream.getVideoTracks().length,
-          audioTracks: stream.getAudioTracks().length,
+          videoTracks: videoTracks.length,
+          audioTracks: audioTracks.length,
           streamActive: stream.active,
           hasVideo,
           hasAudio,
+          videoTrackEnabled: videoTracks[0]?.enabled,
+          audioTrackEnabled: audioTracks[0]?.enabled,
+          videoTrackReadyState: videoTracks[0]?.readyState,
+          audioTrackReadyState: audioTracks[0]?.readyState,
         })
         videoElement.srcObject = stream
         
@@ -1765,6 +1860,18 @@ const CrewMeetingView = ({
           try {
             console.log(`🚀 WebRTC 연결 시작: ${participant.userName} (${participant.userId})`)
             
+            // 로컬 스트림이 설정되어 있는지 확인
+            if (!myVideoStream) {
+              console.warn(`⚠️ 로컬 스트림이 없습니다. Offer 생성을 대기합니다: ${participant.userName}`)
+              // 로컬 스트림이 없으면 잠시 대기 후 재시도
+              await new Promise(resolve => setTimeout(resolve, 1000))
+              // 재시도
+              if (!myVideoStream) {
+                console.error(`❌ 로컬 스트림이 여전히 없습니다. 연결을 건너뜁니다: ${participant.userName}`)
+                continue
+              }
+            }
+            
             // STUN 서버 상태 확인
             const peerConnection = webrtcService.getPeerConnection(participant.userId)
             if (peerConnection) {
@@ -1776,6 +1883,27 @@ const CrewMeetingView = ({
                 localDescription: peerConnection.localDescription ? '설정됨' : '없음',
                 remoteDescription: peerConnection.remoteDescription ? '설정됨' : '없음',
               })
+              console.log(`🧊 ICE 연결 상태: ${participant.userName} = ${peerConnection.iceConnectionState}`)
+              console.log(`🔗 WebRTC 연결 상태: ${participant.userName} = ${peerConnection.connectionState}`)
+            }
+            
+            // 로컬 스트림이 PeerConnection에 추가되어 있는지 확인
+            const senders = peerConnection?.getSenders() || []
+            const hasVideoTrack = senders.some(s => s.track?.kind === 'video')
+            const hasAudioTrack = senders.some(s => s.track?.kind === 'audio')
+            console.log(`🔍 PeerConnection 트랙 확인 (${participant.userName}):`, {
+              hasVideoTrack,
+              hasAudioTrack,
+              sendersCount: senders.length,
+              myVideoStreamTracks: myVideoStream?.getTracks().length || 0,
+            })
+            
+            // 트랙이 없으면 로컬 스트림 추가
+            if (peerConnection && (!hasVideoTrack || !hasAudioTrack)) {
+              console.log(`🔄 로컬 스트림을 PeerConnection에 추가: ${participant.userName}`)
+              if (myVideoStream) {
+                await webrtcService.setLocalStream(myVideoStream)
+              }
             }
             
             const offer = await webrtcService.createOffer(participant.userId)
@@ -1858,7 +1986,7 @@ const CrewMeetingView = ({
         console.log('📋 loadParticipants 주기적 호출', { crewId, myVideoEnabled, isExpanded })
         loadParticipants()
       }
-    }, 2000) // 2초마다 갱신
+    }, 5000) // 5초마다 갱신 (2초 → 5초로 증가하여 CPU/네트워크 부하 60% 감소)
     
     return () => clearInterval(interval)
   }, [crewId, loadParticipants, isExpanded]) // isExpanded가 변경되면 재실행
@@ -2307,12 +2435,18 @@ const CrewMeetingView = ({
                             const remoteStream = remoteStreams.get(participant.userId)
                             const connectionState = connectionStates.get(participant.userId)
                             
+                            const videoTracks = remoteStream?.getVideoTracks() || []
+                            const audioTracks = remoteStream?.getAudioTracks() || []
                             console.log(`참여자 ${participant.userName} (${participant.userId}):`, {
                               hasRemoteStream: !!remoteStream,
                               connectionState,
                               videoEnabled: participant.videoEnabled,
+                              audioEnabled: participant.audioEnabled,
                               streamActive: remoteStream?.active,
-                              videoTracks: remoteStream?.getVideoTracks().length || 0,
+                              videoTracks: videoTracks.length,
+                              audioTracks: audioTracks.length,
+                              videoTrackEnabled: videoTracks[0]?.enabled,
+                              audioTrackEnabled: audioTracks[0]?.enabled,
                             })
                             
                             // remoteStream이 있거나 연결 중이면 비디오 표시 시도

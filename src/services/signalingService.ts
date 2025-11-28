@@ -603,15 +603,25 @@ class SignalingService {
     fromUserId: string,
     answer: RTCSessionDescriptionInit
   ): Promise<void> {
-    console.log(`📥 Handling answer from ${fromUserId}`, {
+    console.log(`📥 Answer 수신: ${fromUserId}`, {
       answerType: answer.type,
       hasSdp: !!answer.sdp,
+      sdpLength: answer.sdp?.length || 0,
+      timestamp: new Date().toISOString(),
     })
     try {
       await webrtcService.handleAnswer(fromUserId, answer)
-      console.log(`✅ Answer 처리 완료: ${fromUserId}`)
+      console.log(`✅ Answer 처리 완료: ${fromUserId}`, {
+        answerType: answer.type,
+        hasSdp: !!answer.sdp,
+      })
     } catch (error) {
-      console.error(`❌ Error handling answer from ${fromUserId}:`, error)
+      console.error(`❌ Answer 처리 실패: ${fromUserId}`, error)
+      console.error('   Answer 데이터:', {
+        answerType: answer.type,
+        hasSdp: !!answer.sdp,
+        sdpLength: answer.sdp?.length || 0,
+      })
     }
   }
 
